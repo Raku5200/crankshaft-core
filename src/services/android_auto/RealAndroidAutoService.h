@@ -30,6 +30,7 @@ class QTimer;
 #include "../../hal/multimedia/IAudioMixer.h"
 #include "../../hal/multimedia/IVideoDecoder.h"
 #include "AndroidAutoService.h"
+#include "../../hal/wireless/WirelessAABootstrap.h"
 
 // Forward declarations
 class SessionStore;
@@ -148,6 +149,7 @@ class RealAndroidAutoService : public AndroidAutoService {
   void configureTransport(const QMap<QString, QVariant>& settings) override;
   void setWirelessNetworkManager(
       const std::shared_ptr<IWirelessNetworkManager>& manager) override;
+  void setConnectionMode(const QString& mode) override;
   void setEventBus(EventBus* eventBus) {
     m_eventBus = eventBus;
   }
@@ -478,7 +480,20 @@ class RealAndroidAutoService : public AndroidAutoService {
   QString m_wirelessHotspotPassword;
   int m_wirelessHotspotChannel{0};
   QString m_wirelessHotspotBssid;
+  // Address of this head unit on its own hotspot (what the phone connects to).
+  // Kept separate from m_wirelessHost, which is the *phone's* address for
+  // outbound "head unit server" connections.
+  QString m_wirelessHotspotIp;
   std::shared_ptr<IWirelessNetworkManager> m_wirelessNetworkManager;
+
+  // Native wireless Android Auto (Bluetooth RFCOMM bootstrap)
+  bool m_wirelessBluetoothEnabled{true};
+  int m_wirelessPairingWindowSeconds{120};
+  QString m_wirelessBluetoothName;
+  WirelessAABootstrap* m_wirelessBootstrap{nullptr};
+  void startWirelessBootstrap();
+  void stopWirelessTransport();
+  auto currentWirelessInfo() -> aawireless::WifiInfo;
 
   // Strands for channel operations
   std::unique_ptr<boost::asio::io_service::strand> m_strand;

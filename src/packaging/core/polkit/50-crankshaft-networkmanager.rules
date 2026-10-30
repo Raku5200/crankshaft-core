@@ -1,0 +1,12 @@
+// Project: Crankshaft
+// Allow the crankshaft service user to manage NetworkManager connections.
+//
+// crankshaft-core runs as a system user with no login session, so polkit would
+// otherwise refuse NetworkManager requests from it. This is needed to create
+// and activate the Wi-Fi hotspot used by wireless Android Auto.
+polkit.addRule(function(action, subject) {
+    if (subject.user === "crankshaft" &&
+        action.id.indexOf("org.freedesktop.NetworkManager.") === 0) {
+        return polkit.Result.YES;
+    }
+});

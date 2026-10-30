@@ -14,6 +14,19 @@
       "startup_profile": "compat_openauto_profile",
       "compat_openauto_profile": true,
       "video_transport_mode": "websocket-h264",
+      "wireless": {
+        "hotspot": {
+          "auto_start": true,
+          "ssid": "Crankshaft-AA",
+          "password": "random",
+          "channel": 0
+        },
+        "bluetooth": {
+          "enabled": true,
+          "name": "Crankshaft",
+          "pairing_window_seconds": 120
+        }
+      },
       "logging": {
         "enabled": true,
         "level": "debug",

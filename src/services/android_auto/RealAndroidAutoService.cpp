@@ -41,6 +41,7 @@
 #include "../../hal/multimedia/GStreamerWebRtcBridge.h"
 #include "../audio/AudioRouter.h"
 #include "../config/ConfigService.h"
+#include <QFile>
 #include "../eventbus/EventBus.h"
 #include "../logging/Logger.h"
 #include "../session/SessionStore.h"
@@ -3010,6 +3011,131 @@ void RealAndroidAutoService::setWirelessNetworkManager(
   m_wirelessNetworkManager = manager;
 }
 
+auto RealAndroidAutoService::currentWirelessInfo() -> aawireless::WifiInfo {
+  // Re-read the hotspot at handshake time: NetworkManager assigns the IP a
+  // moment after activation, so values captured at start may still be empty.
+  if (m_wirelessNetworkManager) {
+    const IWirelessNetworkManager::HotspotStatus status = m_wirelessNetworkManager->getHotspotStatus();
+    if (status.active) {
+      if (!status.ipAddress.isEmpty()) {
+        m_wirelessHotspotIp = status.ipAddress;
+      }
+      if (!status.bssid.isEmpty()) {
+        m_wirelessHotspotBssid = status.bssid;
+      }
+      if (!status.ssid.isEmpty()) {
+        m_wirelessHotspotSsid = status.ssid;
+      }
+    }
+  }
+
+  aawireless::WifiInfo info;
+  info.ssid = m_wirelessHotspotSsid;
+  info.password = m_wirelessHotspotPassword;
+  info.port = m_wirelessPort;
+  // NetworkManager "shared" mode always serves 10.42.0.1 unless reconfigured.
+  info.ipAddress = m_wirelessHotspotIp.isEmpty() ? QStringLiteral("10.42.0.1") : m_wirelessHotspotIp;
+  info.bssid = m_wirelessHotspotBssid;
+  if (info.bssid.isEmpty()) {
+    QFile mac(QStringLiteral("/sys/class/net/wlan0/address"));
+    if (mac.open(QIODevice::ReadOnly)) {
+      info.bssid = QString::fromLatin1(mac.readAll()).trimmed();
+    }
+  }
+  return info;
+}
+
+void RealAndroidAutoService::startWirelessBootstrap() {
+  if (!m_wirelessBootstrap) {
+    m_wirelessBootstrap = new WirelessAABootstrap(this);
+    connect(m_wirelessBootstrap, &WirelessAABootstrap::handshakeFailed, this,
+            [](const QString& device, const QString& reason) {
+              Logger::instance().warning(
+                  QString("[RealAndroidAutoService] Wireless AA handshake with %1 failed: %2")
+                      .arg(device, reason));
+            });
+  }
+  if (m_wirelessBootstrap->isRunning()) {
+    return;
+  }
+
+  WirelessAABootstrap::Options options;
+  options.pairingWindowSeconds = m_wirelessPairingWindowSeconds;
+  options.adapterAlias = m_wirelessBluetoothName;
+  if (!m_wirelessBootstrap->start([this]() { return currentWirelessInfo(); }, options)) {
+    Logger::instance().warning(
+        "[RealAndroidAutoService] Bluetooth wireless AA bootstrap unavailable; phones must use "
+        "head unit server mode instead");
+    return;
+  }
+  m_wirelessBootstrap->setProjectionActive(m_state == ConnectionState::CONNECTED);
+}
+
+void RealAndroidAutoService::stopWirelessTransport() {
+  if (m_wirelessBootstrap) {
+    m_wirelessBootstrap->stop();
+  }
+  if (m_tcpAcceptor) {
+    boost::system::error_code ec;
+    m_tcpAcceptor->close(ec);
+    m_tcpAcceptor.reset();
+  }
+  if (m_wirelessNetworkManager && m_wirelessHotspotAutoStart) {
+    m_wirelessNetworkManager->stopHotspot();
+  }
+  m_wirelessHotspotIp.clear();
+}
+
+void RealAndroidAutoService::setConnectionMode(const QString& mode) {
+  const QString normalised = mode.trimmed().toLower();
+  TransportMode newMode;
+  if (normalised == QStringLiteral("usb")) {
+    newMode = TransportMode::USB;
+  } else if (normalised == QStringLiteral("wireless")) {
+    newMode = TransportMode::Wireless;
+  } else if (normalised == QStringLiteral("auto")) {
+    newMode = TransportMode::Auto;
+  } else {
+    Logger::instance().warning(
+        QString("[RealAndroidAutoService] Ignoring unknown connection mode '%1'").arg(mode));
+    return;
+  }
+
+  const bool wasWireless = m_transportMode == TransportMode::Wireless || m_wirelessEnabled;
+  const bool newWirelessEnabled = newMode == TransportMode::Wireless ||
+                                  (newMode == TransportMode::Auto && m_wirelessEnabled);
+  if (newMode == m_transportMode && newWirelessEnabled == wasWireless) {
+    return;
+  }
+
+  Logger::instance().info(
+      QString("[RealAndroidAutoService] Connection mode -> %1 (state %2)")
+          .arg(normalised, connectionStateToString(m_state)));
+  m_transportMode = newMode;
+  m_wirelessEnabled = newWirelessEnabled;
+
+  // Never tear down a running projection; the new mode applies once it ends.
+  if (m_state != ConnectionState::SEARCHING && m_state != ConnectionState::DISCONNECTED) {
+    Logger::instance().info(
+        "[RealAndroidAutoService] Projection active; connection mode applies after disconnect");
+    return;
+  }
+
+  if (m_state == ConnectionState::SEARCHING) {
+    stopSearching();
+  }
+  if (wasWireless && !m_wirelessEnabled) {
+    stopWirelessTransport();
+  } else if (m_tcpAcceptor) {
+    boost::system::error_code ec;
+    m_tcpAcceptor->close(ec);
+    m_tcpAcceptor.reset();
+  }
+  if (m_isInitialised && m_state == ConnectionState::DISCONNECTED) {
+    startSearching();
+  }
+}
+
 void RealAndroidAutoService::configureTransport(const QMap<QString, QVariant>& settings) {
   applyAndroidAutoLoggingConfig(settings);
   setChannelConfig(resolveAndroidAutoChannelConfig(settings, m_channelConfig));
@@ -3122,16 +3248,46 @@ void RealAndroidAutoService::configureTransport(const QMap<QString, QVariant>& s
     m_wirelessEnabled = settings.value("wireless.enabled", false).toBool();
   }
 
-  if (m_wirelessEnabled || m_transportMode == TransportMode::Wireless) {
-    m_wirelessHost = settings.value("wireless.host", "").toString();
-    m_wirelessPort = settings.value("wireless.port", 5277).toUInt();
-    m_wirelessHotspotAutoStart = settings.value("wireless.hotspot.auto_start", true).toBool();
+  // Wireless settings are always loaded so the mode can be switched to
+  // wireless at runtime (setConnectionMode) without a restart.
+  {
+    // Device settings win; otherwise fall back to crankshaft.json
+    // (core.android_auto.wireless.*), then the built-in default.
+    const auto wirelessSetting = [&settings](const QString& key, const QVariant& fallback) {
+      if (settings.contains(key)) {
+        return settings.value(key);
+      }
+      return ConfigService::instance().get(QStringLiteral("core.android_auto.") + key, fallback);
+    };
+    m_wirelessHost = wirelessSetting("wireless.host", "").toString();
+    m_wirelessPort = static_cast<quint16>(wirelessSetting("wireless.port", 5277).toUInt());
+    m_wirelessHotspotAutoStart = wirelessSetting("wireless.hotspot.auto_start", true).toBool();
     m_wirelessHotspotSsid =
-        settings.value("wireless.hotspot.ssid", QStringLiteral("Crankshaft-AA")).toString();
+        wirelessSetting("wireless.hotspot.ssid", QStringLiteral("Crankshaft-AA")).toString();
     m_wirelessHotspotPassword =
-        settings.value("wireless.hotspot.password", QStringLiteral("crankshaft-aa")).toString();
-    m_wirelessHotspotChannel = settings.value("wireless.hotspot.channel", 0).toInt();
+        wirelessSetting("wireless.hotspot.password", QStringLiteral("crankshaft-aa")).toString();
+    m_wirelessHotspotChannel = wirelessSetting("wireless.hotspot.channel", 0).toInt();
+    m_wirelessBluetoothEnabled = wirelessSetting("wireless.bluetooth.enabled", true).toBool();
+    m_wirelessPairingWindowSeconds = qBound(
+        0, wirelessSetting("wireless.bluetooth.pairing_window_seconds", 120).toInt(), 3600);
+    m_wirelessBluetoothName = wirelessSetting("wireless.bluetooth.name", QString()).toString();
 
+    // "random": fresh WPA2 password each time core starts. The phone receives
+    // it over Bluetooth during every handshake, so nobody ever types it, and a
+    // password published in source code can't be used to join the car's hotspot.
+    if (m_wirelessHotspotPassword.compare(QStringLiteral("random"), Qt::CaseInsensitive) == 0) {
+      static const QString alphabet =
+          QStringLiteral("ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789");
+      QString generated;
+      for (int i = 0; i < 16; ++i) {
+        generated.append(alphabet.at(
+            static_cast<int>(QRandomGenerator::system()->bounded(alphabet.size()))));
+      }
+      m_wirelessHotspotPassword = generated;
+    }
+  }
+
+  if (m_wirelessEnabled || m_transportMode == TransportMode::Wireless) {
     if (m_wirelessHost.isEmpty() && m_transportMode == TransportMode::Wireless) {
       Logger::instance().info(
           "[RealAndroidAutoService] Wireless mode selected without host; TCP server/listen mode will be used.");
@@ -3371,6 +3527,12 @@ bool RealAndroidAutoService::setupTCPServerTransport(quint16 port) {
     auto socket = m_tcpSocket;
     auto acceptor = m_tcpAcceptor;
     m_tcpAcceptor->async_accept(*socket, [this, socket, acceptor](const boost::system::error_code& ec) {
+      // A listener closed on purpose (mode switch / restart) is not an error,
+      // and a stale listener must not change the state of a newer search.
+      if (ec == boost::asio::error::operation_aborted || acceptor != m_tcpAcceptor) {
+        aaLogInfo("wireless", "Wireless AA listener closed");
+        return;
+      }
       if (ec) {
         Logger::instance().error(QString("[RealAndroidAutoService] Wireless AA accept failed: %1")
                                      .arg(QString::fromStdString(ec.message())));
@@ -4288,8 +4450,11 @@ bool RealAndroidAutoService::startSearching() {
       if (hotspotStatus.active) {
         m_wirelessHotspotSsid = hotspotStatus.ssid;
         m_wirelessHotspotBssid = hotspotStatus.bssid;
+        // This is OUR address on the hotspot. It used to be written into
+        // m_wirelessHost, which made the service try an outbound connection
+        // to itself instead of listening for the phone.
         if (!hotspotStatus.ipAddress.isEmpty()) {
-          m_wirelessHost = hotspotStatus.ipAddress;
+          m_wirelessHotspotIp = hotspotStatus.ipAddress;
         }
       }
     }
@@ -4302,6 +4467,10 @@ bool RealAndroidAutoService::startSearching() {
 
       if (setupTCPServerTransport(m_wirelessPort)) {
         transitionToState(ConnectionState::SEARCHING);
+        // Let phones start Android Auto natively via Bluetooth -> Wi-Fi.
+        if (m_wirelessBluetoothEnabled && m_wirelessHotspotAutoStart) {
+          startWirelessBootstrap();
+        }
         return true;
       }
 
@@ -7066,8 +7235,14 @@ void RealAndroidAutoService::transitionToState(ConnectionState newState) {
       break;
     case ConnectionState::CONNECTED:
       transitionToSessionState(SessionState::ACTIVE);
+      if (m_wirelessBootstrap) {
+        m_wirelessBootstrap->setProjectionActive(true);
+      }
       break;
     case ConnectionState::DISCONNECTED:
+      if (m_wirelessBootstrap) {
+        m_wirelessBootstrap->setProjectionActive(false);
+      }
       if (m_sessionState == SessionState::ACTIVE || m_sessionState == SessionState::NEGOTIATING) {
         transitionToSessionState(SessionState::ENDED);
       }

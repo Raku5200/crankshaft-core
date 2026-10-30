@@ -186,6 +186,7 @@ set(CORE_SOURCES
   hal/wireless/NetworkService.cpp
   hal/wireless/WiFiManager.cpp
   hal/wireless/BluetoothManager.cpp
+  hal/wireless/WirelessAABootstrap.cpp
 )
 
 
@@ -329,6 +330,12 @@ install(FILES ${CMAKE_SOURCE_DIR}/packaging/core/udev/99-crankshaft.rules
   COMPONENT core
 )
 
+# Allow the crankshaft user to manage NetworkManager (wireless AA hotspot)
+install(FILES ${CMAKE_SOURCE_DIR}/packaging/core/polkit/50-crankshaft-networkmanager.rules
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/polkit-1/rules.d
+  COMPONENT core
+)
+
 # Install systemd service unit
 install(FILES ${CMAKE_SOURCE_DIR}/packaging/core/crankshaft-core.service
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/system
@@ -337,6 +344,10 @@ install(FILES ${CMAKE_SOURCE_DIR}/packaging/core/crankshaft-core.service
 
 # Ensure Debian package includes runtime shared-library dependencies.
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+# Ship the maintainer scripts (user/groups/directories, udev reload) like ui-slim does.
+set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
+    "${CMAKE_SOURCE_DIR}/packaging/core/postinst;${CMAKE_SOURCE_DIR}/packaging/core/prerm"
+)
 # Keep explicit Qt/system runtime dependencies and allow both legacy and t64
 # package names so dependencies resolve across Debian/Ubuntu releases.
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "libaasdk | libaasdk-amd64, libqt6core6 | libqt6core6t64, libqt6network6 | libqt6network6t64, libqt6websockets6 | libqt6websockets6t64, libqt6gui6 | libqt6gui6t64, libqt6dbus6 | libqt6dbus6t64, libqt6sql6 | libqt6sql6t64, libqt6bluetooth6 | libqt6bluetooth6t64, libqt6multimedia6 | libqt6multimedia6t64, gstreamer1.0-tools, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-nice, gstreamer1.0-libav, libgstreamer1.0-0 | libgstreamer1.0-0t64, libgstreamer-plugins-base1.0-0 | libgstreamer-plugins-base1.0-0t64, dbus, libusb-1.0-0, libssl3 | libssl3t64, libprotobuf32 | libprotobuf32t64, libasound2 | libasound2t64, libpulse0 | libpulse0t64")

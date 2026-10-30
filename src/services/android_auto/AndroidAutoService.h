@@ -103,6 +103,13 @@ class AndroidAutoService : public QObject {
       const std::shared_ptr<IWirelessNetworkManager>& manager);
 
   /**
+   * @brief Switch phone connection mode at runtime ("usb", "wireless" or "auto").
+   *
+   * Sent by the UI's connection preference. Default implementation is a no-op.
+   */
+  virtual void setConnectionMode(const QString& mode);
+
+  /**
    * @brief Initialise the Android Auto service
    * @return true if initialisation successful
    */

@@ -336,6 +336,10 @@ void AndroidAutoService::setWirelessNetworkManager(
   Q_UNUSED(manager)
 }
 
+void AndroidAutoService::setConnectionMode(const QString& mode) {
+  Q_UNUSED(mode)
+}
+
 // Static factory function
 AndroidAutoService* AndroidAutoService::create(MediaPipeline* mediaPipeline,
                                                ProfileManager* profileManager, QObject* parent) {

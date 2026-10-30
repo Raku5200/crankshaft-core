@@ -47,6 +47,13 @@ case "$1" in
         # Add crankshaft user to required groups.
         usermod -a -G plugdev crankshaft 2>/dev/null || true
         usermod -a -G aasdk crankshaft 2>/dev/null || true
+        # Wireless Android Auto: BlueZ profiles/agent (bluetooth) and
+        # NetworkManager hotspot (netdev; polkit rule shipped with the package).
+        for grp in bluetooth netdev; do
+            if getent group "$grp" > /dev/null 2>&1; then
+                usermod -a -G "$grp" crankshaft 2>/dev/null || true
+            fi
+        done
         
         # Set proper ownership for config directory
         if [ -d /etc/crankshaft ]; then

@@ -492,6 +492,15 @@ void WebSocketServer::handlePublish(const QString& topic, const QVariantMap& pay
         return;
       }
 
+      if (topic == QStringLiteral("android-auto/connection-mode")) {
+        // UI connection preference: {"mode": "usb" | "wireless" | "auto"}
+        const QString mode = payload.value(QStringLiteral("mode")).toString();
+        Logger::instance().info(
+            QString("[WebSocketServer] Connection mode requested by UI: %1").arg(mode));
+        aaService->setConnectionMode(mode);
+        return;
+      }
+
       if (topic == QStringLiteral("android-auto/launch")) {
         const QString serialNumber = payload.value(QStringLiteral("serial_number")).toString();
         if (serialNumber.isEmpty()) {
