@@ -146,31 +146,40 @@ auto maneuverGlyph(Maneuver maneuver, int roundaboutExit, const IkeGlyphs& g) ->
   return {};
 }
 
-auto formatNavigationLine(const projection::NavigationGuidance& guidance, const IkeGlyphs& glyphs)
-    -> QByteArray {
+auto formatNavigationParts(const projection::NavigationGuidance& guidance,
+                           const IkeGlyphs& glyphs) -> NavigationLineParts {
   using Status = projection::NavigationGuidance::Status;
+  NavigationLineParts parts;
   if (guidance.status == Status::Rerouting) {
-    return "Rerouting...";
+    parts.road = "Rerouting...";
+    return parts;
   }
   if (guidance.status != Status::Active) {
-    return {};
+    return parts;
   }
 
-  QByteArray line = maneuverGlyph(guidance.maneuver, guidance.roundaboutExit, glyphs);
+  parts.prefix = maneuverGlyph(guidance.maneuver, guidance.roundaboutExit, glyphs);
   const QByteArray distance = toIkeCharset(compactDistance(guidance.distanceText));
   if (!distance.isEmpty()) {
-    if (!line.isEmpty()) line.append(' ');
-    line.append(distance);
+    if (!parts.prefix.isEmpty()) parts.prefix.append(' ');
+    parts.prefix.append(distance);
   }
+  parts.prefix = parts.prefix.left(kIkeTextWidth);
 
   const QString roadSource = guidance.road.isEmpty() ? guidance.currentRoad : guidance.road;
-  QByteArray road = toIkeCharset(abbreviateRoad(roadSource));
-  if (!road.isEmpty()) {
-    if (!line.isEmpty()) line.append(' ');
-    const int room = kIkeTextWidth - line.size();
-    if (room > 0) {
-      line.append(road.left(room));
-    }
+  parts.road = toIkeCharset(abbreviateRoad(roadSource));
+  if (!parts.road.isEmpty() && !parts.prefix.isEmpty() && parts.prefix.size() < kIkeTextWidth) {
+    parts.prefix.append(' ');
+  }
+  return parts;
+}
+
+auto formatNavigationLine(const projection::NavigationGuidance& guidance, const IkeGlyphs& glyphs,
+                          int scrollStep) -> QByteArray {
+  const NavigationLineParts parts = formatNavigationParts(guidance, glyphs);
+  QByteArray line = parts.prefix;
+  if (!parts.road.isEmpty() && parts.roadWidth() > 0) {
+    line.append(scrollWindow(parts.road, scrollStep, parts.roadWidth()));
   }
   return line.left(kIkeTextWidth).trimmed();
 }

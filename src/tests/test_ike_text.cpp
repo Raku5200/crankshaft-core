@@ -76,6 +76,25 @@ TEST(IkeTextTest, NavigationLineRoundaboutWithExitAndTruncation) {
   EXPECT_TRUE(line.startsWith("O2 1.2km Sri Jaya"));
 }
 
+TEST(IkeTextTest, NavigationLineScrollsOnlyTheRoadName) {
+  const auto g = guiding(Maneuver::Roundabout, "1.2 km", "Sri Jayawardenepura Mawatha", 2);
+  const NavigationLineParts parts = formatNavigationParts(g);
+  EXPECT_EQ(parts.prefix, QByteArray("O2 1.2km "));
+  EXPECT_TRUE(parts.roadNeedsScroll());
+  for (int step = 0; step < 40; ++step) {
+    const QByteArray line = formatNavigationLine(g, {}, step);
+    EXPECT_TRUE(line.startsWith("O2 1.2km ")) << step << " " << line.constData();
+    EXPECT_LE(line.size(), 20);
+  }
+  EXPECT_EQ(formatNavigationLine(g, {}, 4), QByteArray("O2 1.2km Jayawardene"));
+}
+
+TEST(IkeTextTest, ShortNavigationLineDoesNotScroll) {
+  const auto g = guiding(Maneuver::Right, "300 m", "Galle Road");
+  EXPECT_FALSE(formatNavigationParts(g).roadNeedsScroll());
+  EXPECT_EQ(formatNavigationLine(g, {}, 7), QByteArray("> 300m Galle Rd"));
+}
+
 TEST(IkeTextTest, NavigationLineUsesConfiguredGlyph) {
   IkeGlyphs glyphs;
   glyphs.left = parseGlyphSpec(QStringLiteral("\\xCA"));

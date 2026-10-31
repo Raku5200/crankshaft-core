@@ -83,10 +83,23 @@ auto compactDistance(const QString& distanceText) -> QString;
 auto maneuverGlyph(projection::Maneuver maneuver, int roundaboutExit, const IkeGlyphs& glyphs)
     -> QByteArray;
 
+/// The fixed part ("> 300m ") and the road name of a navigation line.
+/// Both empty when not guiding; while rerouting the road is "Rerouting...".
+struct NavigationLineParts {
+  QByteArray prefix;
+  QByteArray road;
+  /// Characters left for the road after the prefix.
+  [[nodiscard]] int roadWidth() const { return kIkeTextWidth - static_cast<int>(prefix.size()); }
+  [[nodiscard]] bool roadNeedsScroll() const { return road.size() > roadWidth(); }
+};
+auto formatNavigationParts(const projection::NavigationGuidance& guidance,
+                           const IkeGlyphs& glyphs = {}) -> NavigationLineParts;
+
 /// "<glyph> <distance> <road>" fitted to 20 bytes, e.g. "> 300m Galle Rd".
-/// Empty when not guiding.
+/// The glyph and distance stay put; a road name too long for the space left
+/// scrolls with @p scrollStep. Empty when not guiding.
 auto formatNavigationLine(const projection::NavigationGuidance& guidance,
-                          const IkeGlyphs& glyphs = {}) -> QByteArray;
+                          const IkeGlyphs& glyphs = {}, int scrollStep = 0) -> QByteArray;
 
 /// "Artist - Song" (or whichever part exists). May be longer than 20; use
 /// scrollWindow() to show it. Empty when nothing is playing.

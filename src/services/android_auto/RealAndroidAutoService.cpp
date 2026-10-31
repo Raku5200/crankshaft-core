@@ -1047,7 +1047,7 @@ static void appendVideoSinkFeature(
   // keeps its own controls (media bar, buttons) out of the inset but still
   // draws the map underneath, so nothing interactive ends up hidden.
   const int insetBottom = getBoundedConfigValue(
-      QStringLiteral("core.android_auto.video.content_inset_bottom"), 48, 0, 400);
+      QStringLiteral("core.android_auto.video.content_inset_bottom"), 0, 0, 400);
   if (insetBottom > 0) {
     auto* uiConfig = videoConfig->mutable_ui_config();
     uiConfig->mutable_content_insets()->set_bottom(static_cast<uint32_t>(insetBottom));
@@ -3363,6 +3363,12 @@ RealAndroidAutoService::RealAndroidAutoService(MediaPipeline* mediaPipeline, QOb
   m_clusterScrollTimer = new QTimer(this);
   connect(m_clusterScrollTimer, &QTimer::timeout, this, [this]() {
     ++m_clusterScrollStep;
+    publishClusterText();
+  });
+  m_clusterNavigationTimer = new QTimer(this);
+  m_clusterNavigationTimer->setSingleShot(true);
+  connect(m_clusterNavigationTimer, &QTimer::timeout, this, [this]() {
+    m_clusterNavigationVisible = false;
     publishClusterText();
   });
   loadClusterTextConfig();
@@ -8606,6 +8612,16 @@ void RealAndroidAutoService::loadClusterTextConfig() {
       getBoundedConfigValue("core.ibus.ike.alert_distance_m", 200, 0, 5000);
   m_clusterScrollTimer->setInterval(
       getBoundedConfigValue("core.ibus.ike.scroll_interval_ms", 450, 150, 5000));
+  // 0 keeps the direction on the cluster for the whole route.
+  m_clusterNavigationTimer->setInterval(
+      getBoundedConfigValue("core.ibus.ike.navigation_display_s", 20, 0, 3600) * 1000);
+}
+
+void RealAndroidAutoService::showClusterNavigation() {
+  m_clusterNavigationVisible = true;
+  if (m_clusterNavigationTimer && m_clusterNavigationTimer->interval() > 0) {
+    m_clusterNavigationTimer->start();
+  }
 }
 
 void RealAndroidAutoService::applyNowPlaying(const crankshaft::projection::NowPlaying& update,
@@ -8645,6 +8661,23 @@ void RealAndroidAutoService::applyNavigation(
                   .arg(m_navigationGuidance.roundaboutExit)
                   .arg(m_navigationGuidance.road, m_navigationGuidance.distanceText));
   }
+
+  // A new instruction, or the turn coming within alert distance, puts the
+  // direction back on the cluster for another navigation_display_s.
+  const bool newInstruction = before.maneuver != m_navigationGuidance.maneuver ||
+                              before.road != m_navigationGuidance.road ||
+                              before.status != m_navigationGuidance.status;
+  const int alertMeters = m_clusterAlertDistanceMeters;
+  const bool nowClose = m_navigationGuidance.distanceMeters >= 0 &&
+                        m_navigationGuidance.distanceMeters <= alertMeters;
+  const bool wasClose = before.distanceMeters >= 0 && before.distanceMeters <= alertMeters;
+  if (newInstruction) {
+    m_clusterScrollStep = 0;
+  }
+  if (newInstruction || (nowClose && !wasClose)) {
+    showClusterNavigation();
+  }
+
   emit navigationChanged(crankshaft::projection::toVariantMap(m_navigationGuidance));
   publishClusterText();
 }
@@ -8658,6 +8691,10 @@ void RealAndroidAutoService::resetProjectionInfo() {
   if (m_clusterScrollTimer) {
     m_clusterScrollTimer->stop();
   }
+  m_clusterNavigationVisible = false;
+  if (m_clusterNavigationTimer) {
+    m_clusterNavigationTimer->stop();
+  }
   if (hadData) {
     emit nowPlayingChanged(crankshaft::projection::toVariantMap(m_nowPlaying));
     emit navigationChanged(crankshaft::projection::toVariantMap(m_navigationGuidance));
@@ -8667,26 +8704,42 @@ void RealAndroidAutoService::resetProjectionInfo() {
 
 void RealAndroidAutoService::publishClusterText() {
   using namespace crankshaft::ibus;
-  const QByteArray navigationLine = formatNavigationLine(m_navigationGuidance, m_ikeGlyphs);
+  const NavigationLineParts navigationParts =
+      formatNavigationParts(m_navigationGuidance, m_ikeGlyphs);
+  const bool guiding = !navigationParts.prefix.isEmpty() || !navigationParts.road.isEmpty();
   const QByteArray mediaLine = m_nowPlaying.playing || m_nowPlaying.hasTrack()
                                    ? formatMediaLine(m_nowPlaying, m_ikeGlyphs)
                                    : QByteArray();
 
   QString source = QStringLiteral("none");
+  if (guiding && m_clusterNavigationVisible) {
+    source = QStringLiteral("navigation");
+  } else if (!mediaLine.isEmpty() && m_nowPlaying.playing) {
+    source = QStringLiteral("media");
+  }
+  // Start each line from its beginning rather than mid-scroll.
+  if (source != m_clusterSource) {
+    m_clusterSource = source;
+    m_clusterScrollStep = 0;
+  }
+
   QByteArray line;
   bool alert = false;
-  if (!navigationLine.isEmpty()) {
-    source = QStringLiteral("navigation");
+  bool needsScroll = false;
+  const QByteArray navigationLine = formatNavigationLine(m_navigationGuidance, m_ikeGlyphs,
+                                                         source == QStringLiteral("navigation")
+                                                             ? m_clusterScrollStep
+                                                             : 0);
+  if (source == QStringLiteral("navigation")) {
     line = navigationLine;
     alert = m_navigationGuidance.distanceMeters >= 0 &&
             m_navigationGuidance.distanceMeters <= m_clusterAlertDistanceMeters;
-  } else if (!mediaLine.isEmpty() && m_nowPlaying.playing) {
-    source = QStringLiteral("media");
+    needsScroll = navigationParts.roadNeedsScroll();
+  } else if (source == QStringLiteral("media")) {
     line = scrollWindow(mediaLine, m_clusterScrollStep);
+    needsScroll = mediaLine.size() > kIkeTextWidth;
   }
 
-  // Scroll only while a long media line is what the cluster shows.
-  const bool needsScroll = source == QStringLiteral("media") && mediaLine.size() > kIkeTextWidth;
   if (m_clusterScrollTimer) {
     if (needsScroll && !m_clusterScrollTimer->isActive()) {
       m_clusterScrollTimer->start();

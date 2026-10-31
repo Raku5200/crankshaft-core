@@ -291,6 +291,7 @@ class RealAndroidAutoService : public AndroidAutoService {
   void applyNavigation(const std::function<void(crankshaft::projection::NavigationGuidance&)>& change);
   void resetProjectionInfo();
   void publishClusterText();
+  void showClusterNavigation();
   void loadClusterTextConfig();
 
   void setupAASDK();
@@ -604,6 +605,11 @@ class RealAndroidAutoService : public AndroidAutoService {
   QTimer* m_clusterScrollTimer{nullptr};
   int m_clusterScrollStep{0};
   int m_clusterAlertDistanceMeters{200};
+  // Turn-by-turn shows on the cluster for a while after each new instruction
+  // (and again when the turn gets close), then hands back to the media line.
+  QTimer* m_clusterNavigationTimer{nullptr};
+  bool m_clusterNavigationVisible{false};
+  QString m_clusterSource;
   QVariantMap m_lastClusterText;
 
   // Multimedia components
