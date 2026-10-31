@@ -132,6 +132,7 @@
       "ike": {
         "alert_distance_m": 200,
         "navigation_display_s": 20,
+        "media_display_s": 20,
         "scroll_interval_ms": 450,
         "glyphs": {
           "left": "<",

@@ -292,6 +292,7 @@ class RealAndroidAutoService : public AndroidAutoService {
   void resetProjectionInfo();
   void publishClusterText();
   void showClusterNavigation();
+  void showClusterMedia();
   void loadClusterTextConfig();
 
   void setupAASDK();
@@ -609,6 +610,10 @@ class RealAndroidAutoService : public AndroidAutoService {
   // (and again when the turn gets close), then hands back to the media line.
   QTimer* m_clusterNavigationTimer{nullptr};
   bool m_clusterNavigationVisible{false};
+  // Same idea for the song: shown after a track change or when playback
+  // starts, then cleared.
+  QTimer* m_clusterMediaTimer{nullptr};
+  bool m_clusterMediaVisible{false};
   QString m_clusterSource;
   QVariantMap m_lastClusterText;
 

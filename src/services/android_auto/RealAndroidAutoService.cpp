@@ -3371,6 +3371,12 @@ RealAndroidAutoService::RealAndroidAutoService(MediaPipeline* mediaPipeline, QOb
     m_clusterNavigationVisible = false;
     publishClusterText();
   });
+  m_clusterMediaTimer = new QTimer(this);
+  m_clusterMediaTimer->setSingleShot(true);
+  connect(m_clusterMediaTimer, &QTimer::timeout, this, [this]() {
+    m_clusterMediaVisible = false;
+    publishClusterText();
+  });
   loadClusterTextConfig();
 }
 
@@ -8615,6 +8621,15 @@ void RealAndroidAutoService::loadClusterTextConfig() {
   // 0 keeps the direction on the cluster for the whole route.
   m_clusterNavigationTimer->setInterval(
       getBoundedConfigValue("core.ibus.ike.navigation_display_s", 20, 0, 3600) * 1000);
+  m_clusterMediaTimer->setInterval(
+      getBoundedConfigValue("core.ibus.ike.media_display_s", 20, 0, 3600) * 1000);
+}
+
+void RealAndroidAutoService::showClusterMedia() {
+  m_clusterMediaVisible = true;
+  if (m_clusterMediaTimer && m_clusterMediaTimer->interval() > 0) {
+    m_clusterMediaTimer->start();
+  }
 }
 
 void RealAndroidAutoService::showClusterNavigation() {
@@ -8628,6 +8643,7 @@ void RealAndroidAutoService::applyNowPlaying(const crankshaft::projection::NowPl
                                              bool metadata, bool status) {
   const bool trackChanged = metadata && (update.song != m_nowPlaying.song ||
                                          update.artist != m_nowPlaying.artist);
+  const bool startedPlaying = status && update.playing && !m_nowPlaying.playing;
   if (metadata) {
     m_nowPlaying.song = update.song;
     m_nowPlaying.artist = update.artist;
@@ -8639,6 +8655,9 @@ void RealAndroidAutoService::applyNowPlaying(const crankshaft::projection::NowPl
     if (update.positionSeconds >= 0) {
       m_nowPlaying.positionSeconds = update.positionSeconds;
     }
+  }
+  if (trackChanged || startedPlaying) {
+    showClusterMedia();
   }
   if (trackChanged) {
     m_clusterScrollStep = 0;
@@ -8695,6 +8714,10 @@ void RealAndroidAutoService::resetProjectionInfo() {
   if (m_clusterNavigationTimer) {
     m_clusterNavigationTimer->stop();
   }
+  m_clusterMediaVisible = false;
+  if (m_clusterMediaTimer) {
+    m_clusterMediaTimer->stop();
+  }
   if (hadData) {
     emit nowPlayingChanged(crankshaft::projection::toVariantMap(m_nowPlaying));
     emit navigationChanged(crankshaft::projection::toVariantMap(m_navigationGuidance));
@@ -8714,7 +8737,7 @@ void RealAndroidAutoService::publishClusterText() {
   QString source = QStringLiteral("none");
   if (guiding && m_clusterNavigationVisible) {
     source = QStringLiteral("navigation");
-  } else if (!mediaLine.isEmpty() && m_nowPlaying.playing) {
+  } else if (!mediaLine.isEmpty() && m_nowPlaying.playing && m_clusterMediaVisible) {
     source = QStringLiteral("media");
   }
   // Start each line from its beginning rather than mid-scroll.

@@ -700,6 +700,12 @@ void WebSocketServer::handlePublish(const QString& topic, const QVariantMap& pay
       broadcastEvent(QStringLiteral("bluetooth/error"),
                      QVariantMap{{QStringLiteral("error"),
                                   QStringLiteral("Bluetooth service unavailable")}});
+    } else if (topic == QStringLiteral("bluetooth/status")) {
+      // The UI asks on connect so it shows the real adapter state instead of
+      // assuming "disabled" until something is toggled.
+      broadcastEvent(QStringLiteral("bluetooth/enabled/result"),
+                     QVariantMap{{QStringLiteral("success"), true},
+                                 {QStringLiteral("enabled"), bluetoothManager->isEnabled()}});
     } else if (topic == QStringLiteral("bluetooth/enabled")) {
       const bool enabled = payload.value(QStringLiteral("enabled"), false).toBool();
       const bool requestAccepted = bluetoothManager->setEnabled(enabled);

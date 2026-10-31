@@ -329,7 +329,12 @@ bool BluetoothHAL::setEnabled(bool enabled) {
     return false;
   }
 
-  adapter.setProperty("Powered", enabled);
+  if (!adapter.setProperty("Powered", enabled)) {
+    const QString error = adapter.lastError().message();
+    qWarning() << "Failed to set Bluetooth Powered to" << enabled << ":" << error;
+    emit errorOccurred(error.isEmpty() ? QStringLiteral("Failed to change Bluetooth power") : error);
+    return false;
+  }
 
   d->enabled = enabled;
   emit enabledChanged(enabled);
