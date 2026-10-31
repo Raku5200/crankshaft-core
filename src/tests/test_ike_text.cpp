@@ -66,7 +66,7 @@ TEST(IkeTextTest, TelephoneTextFrameLayout) {
 
 TEST(IkeTextTest, NavigationLineRightTurn) {
   EXPECT_EQ(formatNavigationLine(guiding(Maneuver::Right, "300 m", "Galle Road")),
-            QByteArray("> 300m Galle Rd"));
+            QByteArray("> 300m Galle Rd     "));
 }
 
 TEST(IkeTextTest, NavigationLineRoundaboutWithExitAndTruncation) {
@@ -84,7 +84,7 @@ TEST(IkeTextTest, NavigationLineScrollsOnlyTheRoadName) {
   for (int step = 0; step < 40; ++step) {
     const QByteArray line = formatNavigationLine(g, {}, step);
     EXPECT_TRUE(line.startsWith("O2 1.2km ")) << step << " " << line.constData();
-    EXPECT_LE(line.size(), 20);
+    EXPECT_EQ(line.size(), 20) << step;
   }
   EXPECT_EQ(formatNavigationLine(g, {}, 4), QByteArray("O2 1.2km Jayawardene"));
 }
@@ -92,7 +92,7 @@ TEST(IkeTextTest, NavigationLineScrollsOnlyTheRoadName) {
 TEST(IkeTextTest, ShortNavigationLineDoesNotScroll) {
   const auto g = guiding(Maneuver::Right, "300 m", "Galle Road");
   EXPECT_FALSE(formatNavigationParts(g).roadNeedsScroll());
-  EXPECT_EQ(formatNavigationLine(g, {}, 7), QByteArray("> 300m Galle Rd"));
+  EXPECT_EQ(formatNavigationLine(g, {}, 7), QByteArray("> 300m Galle Rd     "));
 }
 
 TEST(IkeTextTest, NavigationLineUsesConfiguredGlyph) {
@@ -101,6 +101,7 @@ TEST(IkeTextTest, NavigationLineUsesConfiguredGlyph) {
   const QByteArray line = formatNavigationLine(guiding(Maneuver::Left, "50 m", "Duplication Rd"), glyphs);
   EXPECT_EQ(static_cast<quint8>(line[0]), 0xCA);
   EXPECT_EQ(line.mid(1), QByteArray(" 50m Duplication Rd"));
+  EXPECT_EQ(line.size(), 20);
 }
 
 TEST(IkeTextTest, NavigationLineEmptyWhenNotGuidingAndReroutingText) {
@@ -108,7 +109,7 @@ TEST(IkeTextTest, NavigationLineEmptyWhenNotGuidingAndReroutingText) {
   g.status = NavigationGuidance::Status::Inactive;
   EXPECT_TRUE(formatNavigationLine(g).isEmpty());
   g.status = NavigationGuidance::Status::Rerouting;
-  EXPECT_EQ(formatNavigationLine(g), QByteArray("Rerouting..."));
+  EXPECT_EQ(formatNavigationLine(g), QByteArray("Rerouting...        "));
 }
 
 TEST(IkeTextTest, MediaLineFoldsAccentsAndScrolls) {

@@ -515,6 +515,9 @@ class RealAndroidAutoService : public AndroidAutoService {
   int m_wirelessPairingWindowSeconds{120};
   QString m_wirelessBluetoothName;
   WirelessAABootstrap* m_wirelessBootstrap{nullptr};
+  // Auto mode also listens for wireless phones next to the USB scan.
+  bool m_wirelessListenInAutoMode{true};
+  void startAutoModeWirelessListener();
   void startWirelessBootstrap();
   void stopWirelessTransport();
   auto currentWirelessInfo() -> aawireless::WifiInfo;

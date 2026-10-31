@@ -24,6 +24,7 @@
 #include <QDBusObjectPath>
 #include <QDBusUnixFileDescriptor>
 #include <QHash>
+#include <QSet>
 #include <QObject>
 #include <QString>
 #include <QVariantMap>
@@ -240,4 +241,5 @@ class WirelessAABootstrap : public QObject {
 
   QHash<QString, RfcommSession> m_aaSessions;  // keyed by device object path
   QHash<QString, int> m_hspFds;                // held open so the link stays up
+  QSet<QString> m_headsetNudged;               // connected phones already asked for HSP
 };

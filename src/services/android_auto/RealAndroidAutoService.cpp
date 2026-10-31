@@ -20,6 +20,12 @@
 #include "AasdkErrorClassification.h"
 #include "RealAndroidAutoService.h"
 
+#include <QDBusConnection>
+#include <QDBusInterface>
+#include <QDBusObjectPath>
+#include <QDBusReply>
+#include <QDBusVariant>
+
 #if __has_include(<aap_protobuf/service/media/shared/message/UiConfig.pb.h>)
 #include <aap_protobuf/service/media/shared/message/UiConfig.pb.h>
 #define CRANKSHAFT_AA_UI_CONFIG 1
@@ -1047,7 +1053,7 @@ static void appendVideoSinkFeature(
   // keeps its own controls (media bar, buttons) out of the inset but still
   // draws the map underneath, so nothing interactive ends up hidden.
   const int insetBottom = getBoundedConfigValue(
-      QStringLiteral("core.android_auto.video.content_inset_bottom"), 0, 0, 400);
+      QStringLiteral("core.android_auto.video.content_inset_bottom"), 48, 0, 400);
   if (insetBottom > 0) {
     auto* uiConfig = videoConfig->mutable_ui_config();
     uiConfig->mutable_content_insets()->set_bottom(static_cast<uint32_t>(insetBottom));
@@ -3460,6 +3466,83 @@ void RealAndroidAutoService::startWirelessBootstrap() {
   m_wirelessBootstrap->setProjectionActive(m_state == ConnectionState::CONNECTED);
 }
 
+// True when NetworkManager has wlan0 connected to some network (as a client).
+// Called only when our own hotspot is not active, so "activated" means a
+// different connection owns the radio.
+static bool wlanJoinedOtherNetwork() {
+  QDBusInterface nm(QStringLiteral("org.freedesktop.NetworkManager"),
+                    QStringLiteral("/org/freedesktop/NetworkManager"),
+                    QStringLiteral("org.freedesktop.NetworkManager"), QDBusConnection::systemBus());
+  if (!nm.isValid()) {
+    return false;
+  }
+  QDBusReply<QDBusObjectPath> device =
+      nm.call(QStringLiteral("GetDeviceByIpIface"), QStringLiteral("wlan0"));
+  if (!device.isValid()) {
+    return false;
+  }
+  QDBusInterface props(QStringLiteral("org.freedesktop.NetworkManager"), device.value().path(),
+                       QStringLiteral("org.freedesktop.DBus.Properties"),
+                       QDBusConnection::systemBus());
+  QDBusReply<QDBusVariant> state =
+      props.call(QStringLiteral("Get"), QStringLiteral("org.freedesktop.NetworkManager.Device"),
+                 QStringLiteral("State"));
+  constexpr uint kNmDeviceStateActivated = 100;
+  return state.isValid() && state.value().variant().toUInt() == kNmDeviceStateActivated;
+}
+
+void RealAndroidAutoService::startAutoModeWirelessListener() {
+  if (!m_wirelessListenInAutoMode || !m_wirelessBluetoothEnabled) {
+    return;
+  }
+  if (m_wirelessHotspotAutoStart && m_wirelessNetworkManager) {
+    IWirelessNetworkManager::HotspotStatus status = m_wirelessNetworkManager->getHotspotStatus();
+    if (!status.active && wlanJoinedOtherNetwork()) {
+      // e.g. home Wi-Fi in the garage: don't drop it (and SSH) for a hotspot.
+      Logger::instance().info(
+          "[RealAndroidAutoService] Auto mode: wlan0 is on another Wi-Fi network; wireless AA "
+          "hotspot not started (USB only). Choose Wireless mode to force it.");
+      return;
+    }
+    if (!status.active) {
+      IWirelessNetworkManager::HotspotConfig hotspotConfig;
+      hotspotConfig.ssid = m_wirelessHotspotSsid;
+      hotspotConfig.password = m_wirelessHotspotPassword;
+      hotspotConfig.channel = m_wirelessHotspotChannel;
+      hotspotConfig.security = m_wirelessHotspotPassword.isEmpty()
+                                   ? IWirelessNetworkManager::SecurityMode::Open
+                                   : IWirelessNetworkManager::SecurityMode::Wpa2Psk;
+      if (!m_wirelessNetworkManager->startHotspot(hotspotConfig)) {
+        Logger::instance().warning(
+            "[RealAndroidAutoService] Auto mode: wireless hotspot did not start; USB only");
+        return;
+      }
+      status = m_wirelessNetworkManager->getHotspotStatus();
+    }
+    if (status.active) {
+      m_wirelessHotspotSsid = status.ssid;
+      m_wirelessHotspotBssid = status.bssid;
+      if (!status.ipAddress.isEmpty()) {
+        m_wirelessHotspotIp = status.ipAddress;
+      }
+    }
+  } else if (!m_wirelessHotspotAutoStart) {
+    // The phone needs our hotspot; without it only USB can work.
+    return;
+  }
+
+  if (!setupTCPServerTransport(m_wirelessPort)) {
+    Logger::instance().warning(
+        QString("[RealAndroidAutoService] Auto mode: cannot listen on port %1; USB only")
+            .arg(m_wirelessPort));
+    return;
+  }
+  startWirelessBootstrap();
+  logInfo(QString("[RealAndroidAutoService] Auto mode: USB and wireless (port %1) both active")
+              .arg(m_wirelessPort)
+              .toStdString());
+}
+
 void RealAndroidAutoService::stopWirelessTransport() {
   if (m_wirelessBootstrap) {
     m_wirelessBootstrap->stop();
@@ -3513,7 +3596,7 @@ void RealAndroidAutoService::setConnectionMode(const QString& mode) {
   if (m_state == ConnectionState::SEARCHING) {
     stopSearching();
   }
-  if (wasWireless && !m_wirelessEnabled) {
+  if ((wasWireless && !m_wirelessEnabled) || newMode == TransportMode::USB) {
     stopWirelessTransport();
   } else if (m_tcpAcceptor) {
     boost::system::error_code ec;
@@ -3660,6 +3743,7 @@ void RealAndroidAutoService::configureTransport(const QMap<QString, QVariant>& s
     m_wirelessPairingWindowSeconds = qBound(
         0, wirelessSetting("wireless.bluetooth.pairing_window_seconds", 120).toInt(), 3600);
     m_wirelessBluetoothName = wirelessSetting("wireless.bluetooth.name", QString()).toString();
+    m_wirelessListenInAutoMode = wirelessSetting("wireless.listen_in_auto_mode", true).toBool();
 
     // "random": fresh WPA2 password each time core starts. The phone receives
     // it over Bluetooth during every handshake, so nobody ever types it, and a
@@ -3897,6 +3981,14 @@ bool RealAndroidAutoService::setupTCPServerTransport(quint16 port) {
     return false;
   }
 
+  // A previous listener may still hold the port (its pending accept keeps it
+  // alive even after m_tcpAcceptor is reset); close it so bind() can succeed.
+  if (m_tcpAcceptor) {
+    boost::system::error_code closeEc;
+    m_tcpAcceptor->close(closeEc);
+    m_tcpAcceptor.reset();
+  }
+
   try {
     m_tcpWrapper = std::make_shared<aasdk::tcp::TCPWrapper>();
     m_tcpAcceptor = std::make_shared<boost::asio::ip::tcp::acceptor>(*m_ioService);
@@ -3927,6 +4019,33 @@ bool RealAndroidAutoService::setupTCPServerTransport(quint16 port) {
                                      .arg(QString::fromStdString(ec.message())));
         transitionToState(ConnectionState::DISCONNECTED);
         return;
+      }
+
+      // Auto mode listens for wireless while it also scans USB. If a USB phone
+      // got there first, turn the wireless phone away.
+      if (m_transport || m_aoapInProgress || m_state == ConnectionState::CONNECTED) {
+        aaLogInfo("wireless", "Wireless AA connection refused: a USB session is active");
+        boost::system::error_code closeEc;
+        socket->close(closeEc);
+        return;
+      }
+      // Wireless won: stop the USB scan so it can't start a second session.
+      if (m_usbHubDetectionStarted) {
+        aaLogInfo("wireless", "Wireless phone connected; stopping USB scan");
+        ++m_usbSearchGeneration;
+        if (m_usbHub) {
+          m_usbHub->cancel();
+        }
+        m_usbHubDetectionStarted = false;
+        m_initialScanTriggered = false;
+        QMetaObject::invokeMethod(
+            this,
+            [this]() {
+              if (m_deviceDetectionTimer) {
+                m_deviceDetectionTimer->stop();
+              }
+            },
+            Qt::QueuedConnection);
       }
 
       auto tcpEndpoint = std::make_shared<aasdk::tcp::TCPEndpoint>(*m_tcpWrapper, socket);
@@ -4296,7 +4415,8 @@ void RealAndroidAutoService::setupChannelsWithTransport() {
       Logger::instance().info("Bluetooth channel enabled (TCP)");
     }
 
-    if (m_wirelessEnabled || m_transportMode == TransportMode::Wireless) {
+    // A TCP session is always a wireless one (also in Auto mode).
+    {
       m_wifiProjectionChannel =
           std::make_shared<aasdk::channel::wifiprojection::WifiProjectionService>(*m_strand,
                                                                                    m_messenger);
@@ -4815,6 +4935,10 @@ void RealAndroidAutoService::cleanupChannels() {
 
   m_transport.reset();
   m_tcpSocket.reset();
+  if (m_tcpAcceptor) {
+    boost::system::error_code closeEc;
+    m_tcpAcceptor->close(closeEc);
+  }
   m_tcpAcceptor.reset();
   m_tcpWrapper.reset();
   m_cryptor.reset();
@@ -4918,6 +5042,11 @@ bool RealAndroidAutoService::startSearching() {
     logInfo("[RealAndroidAutoService] Wireless connection established");
     handleConnectionEstablished();
     return true;
+  }
+
+  // Auto mode: also accept wireless phones while scanning USB.
+  if (m_transportMode == TransportMode::Auto) {
+    startAutoModeWirelessListener();
   }
 
   // USB mode: start USB hub to detect devices
@@ -8620,9 +8749,9 @@ void RealAndroidAutoService::loadClusterTextConfig() {
       getBoundedConfigValue("core.ibus.ike.scroll_interval_ms", 450, 150, 5000));
   // 0 keeps the direction on the cluster for the whole route.
   m_clusterNavigationTimer->setInterval(
-      getBoundedConfigValue("core.ibus.ike.navigation_display_s", 20, 0, 3600) * 1000);
+      getBoundedConfigValue("core.ibus.ike.navigation_display_s", 30, 0, 3600) * 1000);
   m_clusterMediaTimer->setInterval(
-      getBoundedConfigValue("core.ibus.ike.media_display_s", 20, 0, 3600) * 1000);
+      getBoundedConfigValue("core.ibus.ike.media_display_s", 30, 0, 3600) * 1000);
 }
 
 void RealAndroidAutoService::showClusterMedia() {

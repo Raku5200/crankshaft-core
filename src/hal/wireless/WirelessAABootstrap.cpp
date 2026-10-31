@@ -585,20 +585,50 @@ void WirelessAABootstrap::reconnectTick() {
   }
 
   QStringList candidates;
+  QString connectedWithoutHeadset;
+  QSet<QString> connectedNow;
   const DBusManagedObjectMap objects = reply.value();
   for (auto it = objects.constBegin(); it != objects.constEnd(); ++it) {
     const QVariantMap device = it.value().value(QLatin1String(BLUEZ_DEVICE_INTERFACE));
     if (device.isEmpty() || !device.value(QStringLiteral("Paired")).toBool()) {
       continue;
     }
+    const QString path = it.key().path();
     if (device.value(QStringLiteral("Connected")).toBool()) {
-      // A paired phone is already connected; its Android Auto app decides
-      // whether to start, don't fight it.
-      return;
+      connectedNow.insert(path);
+      // Connected (e.g. the phone reconnected by itself) but without the
+      // headset link that makes its Android Auto app look for us: ask once.
+      if (!m_hspFds.contains(path) && !m_headsetNudged.contains(path)) {
+        connectedWithoutHeadset = path;
+      }
+      continue;
     }
-    candidates.append(it.key().path());
+    candidates.append(path);
   }
-  if (candidates.isEmpty()) {
+  // Forget phones that disconnected so they get nudged again next time.
+  m_headsetNudged.intersect(connectedNow);
+
+  if (!connectedWithoutHeadset.isEmpty()) {
+    m_headsetNudged.insert(connectedWithoutHeadset);
+    logInfo(QStringLiteral("Phone %1 is connected without Android Auto; requesting headset link")
+                .arg(connectedWithoutHeadset));
+    QDBusInterface device(QLatin1String(BLUEZ_SERVICE), connectedWithoutHeadset,
+                          QLatin1String(BLUEZ_DEVICE_INTERFACE), QDBusConnection::systemBus());
+    auto* watcher = new QDBusPendingCallWatcher(
+        device.asyncCall(QStringLiteral("ConnectProfile"), QLatin1String(HSP_AG_UUID)), this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this,
+            [path = connectedWithoutHeadset](QDBusPendingCallWatcher* w) {
+              QDBusPendingReply<> r = *w;
+              if (r.isError()) {
+                logInfo(QStringLiteral("Headset link to %1 not made (%2: %3)")
+                            .arg(path, r.error().name(), r.error().message()));
+              }
+              w->deleteLater();
+            });
+    return;
+  }
+  if (!connectedNow.isEmpty() || candidates.isEmpty()) {
+    // A phone is connected: its Android Auto app decides whether to start.
     return;
   }
 

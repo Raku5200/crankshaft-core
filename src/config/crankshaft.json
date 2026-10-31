@@ -68,7 +68,7 @@
         "density": 140,
         "width_margin": 0,
         "height_margin": 0,
-        "content_inset_bottom": 0
+        "content_inset_bottom": 48
       },
       "decode": {
         "enabled": true,
@@ -131,8 +131,8 @@
     "ibus": {
       "ike": {
         "alert_distance_m": 200,
-        "navigation_display_s": 20,
-        "media_display_s": 20,
+        "navigation_display_s": 30,
+        "media_display_s": 30,
         "scroll_interval_ms": 450,
         "glyphs": {
           "left": "<",

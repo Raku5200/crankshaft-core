@@ -181,7 +181,14 @@ auto formatNavigationLine(const projection::NavigationGuidance& guidance, const 
   if (!parts.road.isEmpty() && parts.roadWidth() > 0) {
     line.append(scrollWindow(parts.road, scrollStep, parts.roadWidth()));
   }
-  return line.left(kIkeTextWidth).trimmed();
+  // Left-aligned and always exactly 20 characters: a shorter line would be
+  // centred by the cluster, and the arrow and distance would jump around
+  // whenever the scrolling road name passes its gap.
+  line = line.left(kIkeTextWidth);
+  if (line.trimmed().isEmpty()) {
+    return {};
+  }
+  return line.leftJustified(kIkeTextWidth, ' ');
 }
 
 auto formatMediaLine(const projection::NowPlaying& nowPlaying, const IkeGlyphs& glyphs)
