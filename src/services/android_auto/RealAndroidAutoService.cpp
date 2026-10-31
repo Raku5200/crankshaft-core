@@ -66,6 +66,10 @@
 #include <aasdk/Channel/MediaSource/Audio/MicrophoneAudioChannel.hpp>
 #include <aasdk/Channel/SensorSource/SensorSourceService.hpp>
 #include <aasdk/Channel/WifiProjection/WifiProjectionService.hpp>
+#include <aasdk/Channel/MediaPlaybackStatus/MediaPlaybackStatusService.hpp>
+#include <aasdk/Channel/MediaPlaybackStatus/IMediaPlaybackStatusServiceEventHandler.hpp>
+#include "NavigationClusterChannel.h"
+#include "../config/ConfigService.h"
 #include <aasdk/Common/ModernLogger.hpp>
 #include <aasdk/Messenger/ChannelId.hpp>
 #include <aasdk/Messenger/Cryptor.hpp>
@@ -1176,6 +1180,31 @@ static void appendMicrophoneSourceFeature(
   audioConfig->set_number_of_channels(1);
 }
 
+static void appendMediaPlaybackStatusFeature(
+    aap_protobuf::service::control::message::ServiceDiscoveryResponse& response,
+    const std::shared_ptr<aasdk::channel::mediaplaybackstatus::MediaPlaybackStatusService>& channel) {
+  if (!channel) {
+    return;
+  }
+  auto* service = response.add_channels();
+  service->set_id(static_cast<uint32_t>(channel->getId()));
+  service->mutable_media_playback_service();
+}
+
+static void appendNavigationStatusFeature(
+    aap_protobuf::service::control::message::ServiceDiscoveryResponse& response,
+    const std::shared_ptr<crankshaft::android_auto::NavigationClusterChannel>& channel) {
+  if (!channel) {
+    return;
+  }
+  auto* service = response.add_channels();
+  service->set_id(static_cast<uint32_t>(channel->getId()));
+  auto* navigation = service->mutable_navigation_status_service();
+  // ENUM: maneuvers as data (no turn images) - all a text cluster needs.
+  navigation->set_minimum_interval_ms(500);
+  navigation->set_type(aap_protobuf::service::navigationstatus::NavigationStatusService::ENUM);
+}
+
 static auto isRecoverableUsbTransferTimeout(const aasdk::error::Error& error) -> bool {
   static constexpr uint32_t kLibusbTransferTimedOut = 2;
   static constexpr uint32_t kLibusbTransferInterrupted = 4294967292u;  // -4
@@ -1729,6 +1758,8 @@ class AAControlEventHandler final
     appendWifiProjectionFeature(response, m_service->m_wifiProjectionChannel,
                   m_service->m_wirelessHotspotBssid);
     appendMicrophoneSourceFeature(response, m_service->m_microphoneChannel);
+    appendMediaPlaybackStatusFeature(response, m_service->m_mediaStatusChannel);
+    appendNavigationStatusFeature(response, m_service->m_navigationChannel);
 
     auto promise = aasdk::channel::SendPromise::defer(*m_service->m_strand);
     promise->then([]() {}, [self = shared_from_this()](
@@ -2960,6 +2991,290 @@ class AAWifiProjectionEventHandler final
   QPointer<RealAndroidAutoService> m_service;
 };
 
+// ---------------------------------------------------------------------------
+// Media playback status (now playing) and navigation status (turn-by-turn).
+// Callbacks arrive on the AASDK strand; data is converted to plain structs
+// there and applied on the Qt thread.
+// ---------------------------------------------------------------------------
+class AAMediaStatusEventHandler final
+    : public aasdk::channel::mediaplaybackstatus::IMediaPlaybackStatusServiceEventHandler,
+      public std::enable_shared_from_this<AAMediaStatusEventHandler> {
+ public:
+  explicit AAMediaStatusEventHandler(RealAndroidAutoService* service) : m_service(service) {}
+
+  void onChannelOpenRequest(
+      const aap_protobuf::service::control::message::ChannelOpenRequest& request) override {
+    Q_UNUSED(request)
+    if (!m_service || !m_service->m_mediaStatusChannel || !m_service->m_strand) {
+      return;
+    }
+    aap_protobuf::service::control::message::ChannelOpenResponse response;
+    response.set_status(aap_protobuf::shared::MessageStatus::STATUS_SUCCESS);
+    auto promise = aasdk::channel::SendPromise::defer(*m_service->m_strand);
+    promise->then([]() {}, [self = shared_from_this()](const aasdk::error::Error& error) {
+      self->onChannelError(error);
+    });
+    m_service->m_mediaStatusChannel->sendChannelOpenResponse(response, std::move(promise));
+    aaLogInfo("mediaStatusChannel", "Media playback status channel open request accepted");
+    armReceive();
+  }
+
+  void onMetadataUpdate(
+      const aap_protobuf::service::mediaplayback::message::MediaPlaybackMetadata& metadata)
+      override {
+    crankshaft::projection::NowPlaying update;
+    update.song = QString::fromStdString(metadata.song());
+    update.artist = QString::fromStdString(metadata.artist());
+    update.album = QString::fromStdString(metadata.album());
+    update.durationSeconds = static_cast<int>(metadata.duration_seconds());
+    post([update](RealAndroidAutoService* s) { s->applyNowPlaying(update, true, false); });
+    armReceive();
+  }
+
+  void onPlaybackUpdate(
+      const aap_protobuf::service::mediaplayback::message::MediaPlaybackStatus& playback)
+      override {
+    crankshaft::projection::NowPlaying update;
+    update.playing = playback.has_state() &&
+                     playback.state() ==
+                         aap_protobuf::service::mediaplayback::message::MediaPlaybackStatus::PLAYING;
+    update.positionSeconds =
+        playback.has_playback_seconds() ? static_cast<int>(playback.playback_seconds()) : -1;
+    post([update](RealAndroidAutoService* s) { s->applyNowPlaying(update, false, true); });
+    armReceive();
+  }
+
+  void onChannelError(const aasdk::error::Error& e) override {
+    if (!m_service || m_service->m_aasdkTeardownInProgress) {
+      return;
+    }
+    if (isRecoverableUsbReceiveError(e) || isRecoverableMessengerIntertwinedChannelError(e)) {
+      auto self = shared_from_this();
+      QTimer::singleShot(120, m_service, [self]() { self->armReceive(); });
+      return;
+    }
+    if (isOperationInProgressError(e)) {
+      return;
+    }
+    m_service->onChannelError(QStringLiteral("mediaStatus"), QString::fromStdString(e.what()));
+  }
+
+  void armReceive() {
+    if (!m_service || !m_service->m_mediaStatusChannel) {
+      return;
+    }
+    m_service->m_mediaStatusChannel->receive(shared_from_this());
+  }
+
+ private:
+  template <typename F>
+  void post(F&& fn) {
+    QPointer<RealAndroidAutoService> service = m_service;
+    QMetaObject::invokeMethod(
+        m_service.data(),
+        [service, fn = std::forward<F>(fn)]() {
+          if (service) fn(service.data());
+        },
+        Qt::QueuedConnection);
+  }
+
+  QPointer<RealAndroidAutoService> m_service;
+};
+
+class AANavigationEventHandler final
+    : public crankshaft::android_auto::INavigationClusterEventHandler,
+      public std::enable_shared_from_this<AANavigationEventHandler> {
+ public:
+  using Guidance = crankshaft::projection::NavigationGuidance;
+
+  explicit AANavigationEventHandler(RealAndroidAutoService* service) : m_service(service) {}
+
+  void onChannelOpenRequest(
+      const aap_protobuf::service::control::message::ChannelOpenRequest& request) override {
+    Q_UNUSED(request)
+    if (!m_service || !m_service->m_navigationChannel || !m_service->m_strand) {
+      return;
+    }
+    aap_protobuf::service::control::message::ChannelOpenResponse response;
+    response.set_status(aap_protobuf::shared::MessageStatus::STATUS_SUCCESS);
+    auto promise = aasdk::channel::SendPromise::defer(*m_service->m_strand);
+    promise->then([]() {}, [self = shared_from_this()](const aasdk::error::Error& error) {
+      self->onChannelError(error);
+    });
+    m_service->m_navigationChannel->sendChannelOpenResponse(response, std::move(promise));
+    aaLogInfo("navigationChannel", "Navigation status channel open request accepted");
+    armReceive();
+  }
+
+  // The channel re-arms itself after every message below.
+  void onStatusUpdate(
+      const aap_protobuf::service::navigationstatus::message::NavigationStatus& status) override {
+    Guidance::Status mapped = Guidance::Status::Unavailable;
+    switch (status.status()) {
+      case 1: mapped = Guidance::Status::Active; break;
+      case 2: mapped = Guidance::Status::Inactive; break;
+      case 3: mapped = Guidance::Status::Rerouting; break;
+      default: break;
+    }
+    post([mapped](Guidance& g) {
+      g.status = mapped;
+      if (mapped == Guidance::Status::Inactive || mapped == Guidance::Status::Unavailable) {
+        g = Guidance{};
+        g.status = mapped;
+      }
+    });
+  }
+
+  void onTurnEvent(
+      const aap_protobuf::service::navigationstatus::message::NavigationNextTurnEvent& event)
+      override {
+    const auto maneuver = crankshaft::projection::maneuverFromTurnEvent(
+        event.has_event() ? static_cast<int>(event.event()) : 0,
+        event.has_turn_side() ? static_cast<int>(event.turn_side()) : 3);
+    const QString road = QString::fromStdString(event.road());
+    const int exit = event.has_turn_number() ? event.turn_number() : 0;
+    post([maneuver, road, exit](Guidance& g) {
+      g.maneuver = maneuver;
+      g.road = road;
+      g.roundaboutExit = exit;
+      markActive(g);
+    });
+  }
+
+  void onDistanceEvent(
+      const aap_protobuf::service::navigationstatus::message::NavigationNextTurnDistanceEvent&
+          event) override {
+    const int meters = event.distance_meters();
+    const int seconds = event.time_to_turn_seconds();
+    const QString text = crankshaft::projection::formatDistance(
+        meters, event.has_display_distance_e3() ? event.display_distance_e3() : 0,
+        event.has_display_distance_unit() ? static_cast<int>(event.display_distance_unit()) : 0);
+    post([meters, seconds, text](Guidance& g) {
+      g.distanceMeters = meters;
+      g.timeToTurnSeconds = seconds;
+      g.distanceText = text;
+      markActive(g);
+    });
+  }
+
+#if CRANKSHAFT_AA_NAVIGATION_STATE
+  void onNavigationState(
+      const aap_protobuf::service::navigationstatus::message::NavigationState& state) override {
+    if (state.steps_size() == 0) {
+      return;
+    }
+    const auto& step = state.steps(0);
+    const auto maneuver = crankshaft::projection::maneuverFromNavigationType(
+        step.has_maneuver() && step.maneuver().has_type() ? static_cast<int>(step.maneuver().type())
+                                                          : 0);
+    const int exit = step.has_maneuver() ? step.maneuver().roundabout_exit_number() : 0;
+    QString road = step.has_road() ? QString::fromStdString(step.road().name()) : QString();
+    if (road.isEmpty() && step.has_cue() && step.cue().alternate_text_size() > 0) {
+      road = QString::fromStdString(step.cue().alternate_text(0));
+    }
+    post([maneuver, exit, road](Guidance& g) {
+      g.maneuver = maneuver;
+      g.roundaboutExit = exit;
+      g.road = road;
+      markActive(g);
+    });
+  }
+
+  void onCurrentPosition(
+      const aap_protobuf::service::navigationstatus::message::NavigationCurrentPosition& position)
+      override {
+    int meters = -1;
+    int seconds = -1;
+    QString distanceText;
+    if (position.has_step_distance()) {
+      const auto& sd = position.step_distance();
+      if (sd.has_distance()) {
+        meters = sd.distance().meters();
+        distanceText = crankshaft::projection::formatDistanceText(
+            QString::fromStdString(sd.distance().display_value()),
+            static_cast<int>(sd.distance().display_units()), meters);
+      }
+      seconds = sd.has_time_to_step_seconds() ? static_cast<int>(sd.time_to_step_seconds()) : -1;
+    }
+    QString eta;
+    QString destinationText;
+    int toArrival = -1;
+    if (position.destination_distances_size() > 0) {
+      const auto& dd = position.destination_distances(0);
+      eta = QString::fromStdString(dd.estimated_time_at_arrival());
+      toArrival = dd.has_time_to_arrival_seconds() ? static_cast<int>(dd.time_to_arrival_seconds()) : -1;
+      if (dd.has_distance()) {
+        destinationText = crankshaft::projection::formatDistanceText(
+            QString::fromStdString(dd.distance().display_value()),
+            static_cast<int>(dd.distance().display_units()), dd.distance().meters());
+      }
+    }
+    const QString currentRoad =
+        position.has_current_road() ? QString::fromStdString(position.current_road().name()) : QString();
+    post([=](Guidance& g) {
+      if (meters >= 0) {
+        g.distanceMeters = meters;
+        g.distanceText = distanceText;
+      }
+      g.timeToTurnSeconds = seconds;
+      g.eta = eta;
+      g.destinationDistanceText = destinationText;
+      g.timeToArrivalSeconds = toArrival;
+      g.currentRoad = currentRoad;
+      markActive(g);
+    });
+  }
+#endif
+
+  void onUnhandledMessage(int messageId, int payloadSize) override {
+    aaLogDebug("navigationChannel",
+               QString("unhandled message id=%1 size=%2").arg(messageId).arg(payloadSize));
+  }
+
+  void onChannelError(const aasdk::error::Error& e) override {
+    if (!m_service || m_service->m_aasdkTeardownInProgress) {
+      return;
+    }
+    if (isRecoverableUsbReceiveError(e) || isRecoverableMessengerIntertwinedChannelError(e)) {
+      auto self = shared_from_this();
+      QTimer::singleShot(120, m_service, [self]() { self->armReceive(); });
+      return;
+    }
+    if (isOperationInProgressError(e)) {
+      return;
+    }
+    m_service->onChannelError(QStringLiteral("navigation"), QString::fromStdString(e.what()));
+  }
+
+  void armReceive() {
+    if (!m_service || !m_service->m_navigationChannel) {
+      return;
+    }
+    m_service->m_navigationChannel->receive(shared_from_this());
+  }
+
+ private:
+  // Some phones send maneuvers without a preceding ACTIVE status.
+  static void markActive(Guidance& g) {
+    if (g.status == Guidance::Status::Unavailable || g.status == Guidance::Status::Inactive) {
+      g.status = Guidance::Status::Active;
+    }
+  }
+
+  template <typename F>
+  void post(F&& change) {
+    QPointer<RealAndroidAutoService> service = m_service;
+    QMetaObject::invokeMethod(
+        m_service.data(),
+        [service, change = std::forward<F>(change)]() {
+          if (service) service->applyNavigation(change);
+        },
+        Qt::QueuedConnection);
+  }
+
+  QPointer<RealAndroidAutoService> m_service;
+};
+
 RealAndroidAutoService::RealAndroidAutoService(MediaPipeline* mediaPipeline, QObject* parent)
     : AndroidAutoService(parent),
       m_mediaPipeline(mediaPipeline),
@@ -2989,6 +3304,13 @@ RealAndroidAutoService::RealAndroidAutoService(MediaPipeline* mediaPipeline, QOb
   }
 
   resetProjectionStatus(QStringLiteral("service_initialised"));
+
+  m_clusterScrollTimer = new QTimer(this);
+  connect(m_clusterScrollTimer, &QTimer::timeout, this, [this]() {
+    ++m_clusterScrollStep;
+    publishClusterText();
+  });
+  loadClusterTextConfig();
 }
 
 RealAndroidAutoService::~RealAndroidAutoService() {
@@ -3670,6 +3992,17 @@ void RealAndroidAutoService::setupChannels() {
       Logger::instance().info("WiFi projection channel enabled");
     }
 
+    // Now playing + turn-by-turn for the MK4 UI and the instrument cluster.
+    if (ConfigService::instance().get("core.android_auto.channels.media_status", true).toBool()) {
+      m_mediaStatusChannel =
+          std::make_shared<aasdk::channel::mediaplaybackstatus::MediaPlaybackStatusService>(
+              *m_strand, m_messenger);
+    }
+    if (ConfigService::instance().get("core.android_auto.channels.navigation_status", true).toBool()) {
+      m_navigationChannel =
+          std::make_shared<crankshaft::android_auto::NavigationClusterChannel>(*m_strand, m_messenger);
+    }
+
     // Initialize video decoder
     if (m_channelConfig.videoEnabled &&
         m_videoTransportMode != VideoTransportMode::WEBSOCKET_H264) {
@@ -3901,6 +4234,17 @@ void RealAndroidAutoService::setupChannelsWithTransport() {
           std::make_shared<aasdk::channel::wifiprojection::WifiProjectionService>(*m_strand,
                                                                                    m_messenger);
       Logger::instance().info("WiFi projection channel enabled (TCP)");
+    }
+
+    // Now playing + turn-by-turn for the MK4 UI and the instrument cluster.
+    if (ConfigService::instance().get("core.android_auto.channels.media_status", true).toBool()) {
+      m_mediaStatusChannel =
+          std::make_shared<aasdk::channel::mediaplaybackstatus::MediaPlaybackStatusService>(
+              *m_strand, m_messenger);
+    }
+    if (ConfigService::instance().get("core.android_auto.channels.navigation_status", true).toBool()) {
+      m_navigationChannel =
+          std::make_shared<crankshaft::android_auto::NavigationClusterChannel>(*m_strand, m_messenger);
     }
 
     // Initialize video decoder at the negotiated stream resolution.
@@ -4254,6 +4598,12 @@ void RealAndroidAutoService::rearmActiveReceives() {
   if (m_bluetoothChannel && m_bluetoothEventHandler) {
     m_bluetoothChannel->receive(m_bluetoothEventHandler);
   }
+  if (m_mediaStatusEventHandler) {
+    m_mediaStatusEventHandler->armReceive();
+  }
+  if (m_navigationEventHandler) {
+    m_navigationEventHandler->armReceive();
+  }
   if (m_wifiProjectionChannel && m_wifiProjectionEventHandler) {
     m_wifiProjectionChannel->receive(m_wifiProjectionEventHandler);
   }
@@ -4380,6 +4730,8 @@ void RealAndroidAutoService::cleanupChannels() {
   m_sensorChannel.reset();
   m_bluetoothChannel.reset();
   m_wifiProjectionChannel.reset();
+  m_mediaStatusChannel.reset();
+  m_navigationChannel.reset();
   m_controlChannel.reset();
   m_videoEventHandler.reset();
   m_mediaAudioEventHandler.reset();
@@ -4390,6 +4742,8 @@ void RealAndroidAutoService::cleanupChannels() {
   m_inputEventHandler.reset();
   m_microphoneEventHandler.reset();
   m_bluetoothEventHandler.reset();
+  m_mediaStatusEventHandler.reset();
+  m_navigationEventHandler.reset();
   m_wifiProjectionEventHandler.reset();
 
   m_transport.reset();
@@ -5359,6 +5713,22 @@ void RealAndroidAutoService::handleConnectionEstablished() {
     }
   }
 
+  if (m_mediaStatusChannel && !m_mediaStatusEventHandler) {
+    m_mediaStatusEventHandler = std::make_shared<AAMediaStatusEventHandler>(this);
+    if (shouldArmInitialNonControlReceives) {
+      traceChannelReceiveArm(QStringLiteral("mediaStatus"), QStringLiteral("initial_connect"));
+      m_mediaStatusEventHandler->armReceive();
+    }
+  }
+
+  if (m_navigationChannel && !m_navigationEventHandler) {
+    m_navigationEventHandler = std::make_shared<AANavigationEventHandler>(this);
+    if (shouldArmInitialNonControlReceives) {
+      traceChannelReceiveArm(QStringLiteral("navigation"), QStringLiteral("initial_connect"));
+      m_navigationEventHandler->armReceive();
+    }
+  }
+
   if (m_wifiProjectionChannel && !m_wifiProjectionEventHandler) {
     m_wifiProjectionEventHandler = std::make_shared<AAWifiProjectionEventHandler>(this);
     if (shouldArmInitialNonControlReceives) {
@@ -5506,6 +5876,14 @@ void RealAndroidAutoService::armNonControlReceivesAfterControlReady() {
     traceChannelReceiveArm(QStringLiteral("bluetooth"), QStringLiteral("control_ready"));
     m_bluetoothChannel->receive(m_bluetoothEventHandler);
   }
+  if (m_mediaStatusEventHandler) {
+    traceChannelReceiveArm(QStringLiteral("mediaStatus"), QStringLiteral("control_ready"));
+    m_mediaStatusEventHandler->armReceive();
+  }
+  if (m_navigationEventHandler) {
+    traceChannelReceiveArm(QStringLiteral("navigation"), QStringLiteral("control_ready"));
+    m_navigationEventHandler->armReceive();
+  }
   if (m_wifiProjectionChannel && m_wifiProjectionEventHandler) {
     traceChannelReceiveArm(QStringLiteral("wifiProjection"), QStringLiteral("control_ready"));
     m_wifiProjectionChannel->receive(m_wifiProjectionEventHandler);
@@ -5618,6 +5996,14 @@ void RealAndroidAutoService::armOptionalChannelReceivesAfterPrimaryStart() {
     traceChannelReceiveArm(QStringLiteral("bluetooth"), QStringLiteral("optional_channels"));
     m_bluetoothChannel->receive(m_bluetoothEventHandler);
   }
+  if (m_mediaStatusEventHandler) {
+    traceChannelReceiveArm(QStringLiteral("mediaStatus"), QStringLiteral("optional_channels"));
+    m_mediaStatusEventHandler->armReceive();
+  }
+  if (m_navigationEventHandler) {
+    traceChannelReceiveArm(QStringLiteral("navigation"), QStringLiteral("optional_channels"));
+    m_navigationEventHandler->armReceive();
+  }
   if (m_wifiProjectionChannel && m_wifiProjectionEventHandler) {
     traceChannelReceiveArm(QStringLiteral("wifiProjection"), QStringLiteral("optional_channels"));
     m_wifiProjectionChannel->receive(m_wifiProjectionEventHandler);
@@ -5661,6 +6047,8 @@ void RealAndroidAutoService::traceServiceDiscoveryResponse() const {
   appendChannel(QStringLiteral("sensor"), m_sensorChannel);
   appendChannel(QStringLiteral("bluetooth"), m_bluetoothChannel);
   appendChannel(QStringLiteral("microphone"), m_microphoneChannel);
+  appendChannel(QStringLiteral("mediaStatus"), m_mediaStatusChannel);
+  appendChannel(QStringLiteral("navigation"), m_navigationChannel);
 
   capabilityFlags.append(
       QStringLiteral("video=%1")
@@ -7243,6 +7631,7 @@ void RealAndroidAutoService::transitionToState(ConnectionState newState) {
       if (m_wirelessBootstrap) {
         m_wirelessBootstrap->setProjectionActive(false);
       }
+      resetProjectionInfo();
       if (m_sessionState == SessionState::ACTIVE || m_sessionState == SessionState::NEGOTIATING) {
         transitionToSessionState(SessionState::ENDED);
       }
@@ -8128,4 +8517,144 @@ void RealAndroidAutoService::routeSystemAudioToVehicle(const QByteArray& audioDa
   if (!m_audioRouter->routeAudioFrame(AAudioStreamRole::SYSTEM_AUDIO, audioData)) {
     Logger::instance().warning("[RealAndroidAutoService] Failed to route system audio");
   }
+}
+
+// ---------------------------------------------------------------------------
+// Now playing / navigation -> UI and instrument cluster text
+// ---------------------------------------------------------------------------
+
+void RealAndroidAutoService::loadClusterTextConfig() {
+  auto& config = ConfigService::instance();
+  auto glyph = [&config](const char* name, QByteArray* target) {
+    const QString spec =
+        config.get(QStringLiteral("core.ibus.ike.glyphs.%1").arg(QLatin1String(name)), QString())
+            .toString();
+    if (!spec.isEmpty()) {
+      *target = crankshaft::ibus::parseGlyphSpec(spec);
+    }
+  };
+  glyph("left", &m_ikeGlyphs.left);
+  glyph("right", &m_ikeGlyphs.right);
+  glyph("slight_left", &m_ikeGlyphs.slightLeft);
+  glyph("slight_right", &m_ikeGlyphs.slightRight);
+  glyph("sharp_left", &m_ikeGlyphs.sharpLeft);
+  glyph("sharp_right", &m_ikeGlyphs.sharpRight);
+  glyph("straight", &m_ikeGlyphs.straight);
+  glyph("u_turn", &m_ikeGlyphs.uTurn);
+  glyph("keep_left", &m_ikeGlyphs.keepLeft);
+  glyph("keep_right", &m_ikeGlyphs.keepRight);
+  glyph("roundabout", &m_ikeGlyphs.roundabout);
+  glyph("destination", &m_ikeGlyphs.destination);
+  glyph("music", &m_ikeGlyphs.music);
+
+  m_clusterAlertDistanceMeters =
+      getBoundedConfigValue("core.ibus.ike.alert_distance_m", 200, 0, 5000);
+  m_clusterScrollTimer->setInterval(
+      getBoundedConfigValue("core.ibus.ike.scroll_interval_ms", 450, 150, 5000));
+}
+
+void RealAndroidAutoService::applyNowPlaying(const crankshaft::projection::NowPlaying& update,
+                                             bool metadata, bool status) {
+  const bool trackChanged = metadata && (update.song != m_nowPlaying.song ||
+                                         update.artist != m_nowPlaying.artist);
+  if (metadata) {
+    m_nowPlaying.song = update.song;
+    m_nowPlaying.artist = update.artist;
+    m_nowPlaying.album = update.album;
+    m_nowPlaying.durationSeconds = update.durationSeconds;
+  }
+  if (status) {
+    m_nowPlaying.playing = update.playing;
+    if (update.positionSeconds >= 0) {
+      m_nowPlaying.positionSeconds = update.positionSeconds;
+    }
+  }
+  if (trackChanged) {
+    m_clusterScrollStep = 0;
+    aaLogInfo("nowPlaying", QString("%1 - %2").arg(m_nowPlaying.artist, m_nowPlaying.song));
+  }
+  emit nowPlayingChanged(crankshaft::projection::toVariantMap(m_nowPlaying));
+  publishClusterText();
+}
+
+void RealAndroidAutoService::applyNavigation(
+    const std::function<void(crankshaft::projection::NavigationGuidance&)>& change) {
+  const auto before = m_navigationGuidance;
+  change(m_navigationGuidance);
+  if (before.maneuver != m_navigationGuidance.maneuver || before.road != m_navigationGuidance.road ||
+      before.status != m_navigationGuidance.status) {
+    aaLogInfo("navigation",
+              QString("status=%1 maneuver=%2 exit=%3 road=%4 distance=%5")
+                  .arg(crankshaft::projection::statusName(m_navigationGuidance.status),
+                       crankshaft::projection::maneuverName(m_navigationGuidance.maneuver))
+                  .arg(m_navigationGuidance.roundaboutExit)
+                  .arg(m_navigationGuidance.road, m_navigationGuidance.distanceText));
+  }
+  emit navigationChanged(crankshaft::projection::toVariantMap(m_navigationGuidance));
+  publishClusterText();
+}
+
+void RealAndroidAutoService::resetProjectionInfo() {
+  const bool hadData = m_nowPlaying.hasTrack() ||
+                       m_navigationGuidance.status != crankshaft::projection::NavigationGuidance::Status::Unavailable;
+  m_nowPlaying = {};
+  m_navigationGuidance = {};
+  m_clusterScrollStep = 0;
+  if (m_clusterScrollTimer) {
+    m_clusterScrollTimer->stop();
+  }
+  if (hadData) {
+    emit nowPlayingChanged(crankshaft::projection::toVariantMap(m_nowPlaying));
+    emit navigationChanged(crankshaft::projection::toVariantMap(m_navigationGuidance));
+    publishClusterText();
+  }
+}
+
+void RealAndroidAutoService::publishClusterText() {
+  using namespace crankshaft::ibus;
+  const QByteArray navigationLine = formatNavigationLine(m_navigationGuidance, m_ikeGlyphs);
+  const QByteArray mediaLine = m_nowPlaying.playing || m_nowPlaying.hasTrack()
+                                   ? formatMediaLine(m_nowPlaying, m_ikeGlyphs)
+                                   : QByteArray();
+
+  QString source = QStringLiteral("none");
+  QByteArray line;
+  bool alert = false;
+  if (!navigationLine.isEmpty()) {
+    source = QStringLiteral("navigation");
+    line = navigationLine;
+    alert = m_navigationGuidance.distanceMeters >= 0 &&
+            m_navigationGuidance.distanceMeters <= m_clusterAlertDistanceMeters;
+  } else if (!mediaLine.isEmpty() && m_nowPlaying.playing) {
+    source = QStringLiteral("media");
+    line = scrollWindow(mediaLine, m_clusterScrollStep);
+  }
+
+  // Scroll only while a long media line is what the cluster shows.
+  const bool needsScroll = source == QStringLiteral("media") && mediaLine.size() > kIkeTextWidth;
+  if (m_clusterScrollTimer) {
+    if (needsScroll && !m_clusterScrollTimer->isActive()) {
+      m_clusterScrollTimer->start();
+    } else if (!needsScroll && m_clusterScrollTimer->isActive()) {
+      m_clusterScrollTimer->stop();
+      m_clusterScrollStep = 0;
+    }
+  }
+
+  // Latin-1 keeps any configured cluster glyph bytes (>= 0x80) visible in the preview.
+  QVariantMap text;
+  text[QStringLiteral("source")] = source;
+  text[QStringLiteral("line")] = QString::fromLatin1(line);
+  text[QStringLiteral("alert")] = alert;
+  text[QStringLiteral("navigationLine")] = QString::fromLatin1(navigationLine);
+  text[QStringLiteral("mediaLine")] = QString::fromLatin1(mediaLine);
+  text[QStringLiteral("titleFrame")] = line.isEmpty() ? QString() : toHex(ikeTelephoneTextFrame(line));
+  text[QStringLiteral("checkControlFrame")] =
+      alert ? toHex(ikeCheckControlTextFrame(line)) : QString();
+
+  if (text == m_lastClusterText) {
+    return;
+  }
+  m_lastClusterText = text;
+  emit clusterTextChanged(text);
 }

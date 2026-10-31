@@ -472,6 +472,15 @@ void WebSocketServer::handleSubscribe(QWebSocket* client, const QString& topic) 
         if (m_hasProjectionStatus) {
           onAndroidAutoProjectionStatus(m_lastProjectionStatus);
         }
+        if (!m_lastNowPlaying.isEmpty()) {
+          broadcastEvent(QStringLiteral("android-auto/status/now-playing"), m_lastNowPlaying);
+        }
+        if (!m_lastNavigation.isEmpty()) {
+          broadcastEvent(QStringLiteral("android-auto/status/navigation"), m_lastNavigation);
+        }
+        if (!m_lastClusterText.isEmpty()) {
+          broadcastEvent(QStringLiteral("android-auto/status/cluster-text"), m_lastClusterText);
+        }
       }
     }
   } else {
@@ -1311,6 +1320,21 @@ void WebSocketServer::setupAndroidAutoConnections() {
           &WebSocketServer::onAndroidAutoAudioDataReady);
   connect(aaService, &AndroidAutoService::projectionStatusChanged, this,
           &WebSocketServer::onAndroidAutoProjectionStatus);
+  connect(aaService, &AndroidAutoService::nowPlayingChanged, this,
+          [this](const QVariantMap& nowPlaying) {
+            m_lastNowPlaying = nowPlaying;
+            broadcastEvent(QStringLiteral("android-auto/status/now-playing"), nowPlaying);
+          });
+  connect(aaService, &AndroidAutoService::navigationChanged, this,
+          [this](const QVariantMap& navigation) {
+            m_lastNavigation = navigation;
+            broadcastEvent(QStringLiteral("android-auto/status/navigation"), navigation);
+          });
+  connect(aaService, &AndroidAutoService::clusterTextChanged, this,
+          [this](const QVariantMap& clusterText) {
+            m_lastClusterText = clusterText;
+            broadcastEvent(QStringLiteral("android-auto/status/cluster-text"), clusterText);
+          });
     connect(aaService, &AndroidAutoService::webRtcSignalingMessage, this,
       [this](const QString& topic, const QVariantMap& payload) {
         broadcastEvent(topic, payload);

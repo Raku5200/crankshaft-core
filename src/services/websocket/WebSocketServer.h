@@ -390,6 +390,10 @@ class WebSocketServer : public QObject {
   QJsonObject m_lastProjectionStatus;
   bool m_hasProjectionStatus{false};
   qint64 m_lastConnectedStateMs{0};
+  // Last now-playing / navigation / cluster text, replayed to new subscribers.
+  QVariantMap m_lastNowPlaying;
+  QVariantMap m_lastNavigation;
+  QVariantMap m_lastClusterText;
   qint64 m_lastRenegotiationRequestMs{0};
   int m_renegotiationCooldownMs{8000};
   int m_connectedRenegotiationGraceMs{20000};

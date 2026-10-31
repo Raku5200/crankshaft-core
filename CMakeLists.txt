@@ -145,6 +145,9 @@ set(CORE_SOURCES
   services/android_auto/AndroidAutoService.cpp
   services/android_auto/MockAndroidAutoService.cpp
   services/android_auto/RealAndroidAutoService.cpp
+  services/android_auto/ProjectionInfo.cpp
+  services/android_auto/NavigationClusterChannel.cpp
+  services/ibus/IkeText.cpp
   services/android_auto/WiFiManagerWirelessNetworkManager.cpp
   services/android_auto/ProtocolHelpers.cpp
   services/preferences/PreferencesService.cpp

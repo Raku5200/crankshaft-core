@@ -109,6 +109,9 @@ set(CORE_SOURCES
   services/android_auto/AasdkErrorClassification.h
   services/android_auto/WiFiManagerWirelessNetworkManager.cpp
   services/android_auto/ProtocolHelpers.cpp
+  services/android_auto/ProjectionInfo.cpp
+  services/android_auto/NavigationClusterChannel.cpp
+  services/ibus/IkeText.cpp
   services/preferences/PreferencesService.cpp
   services/session/SessionStore.cpp
   services/audio/AudioRouter.cpp

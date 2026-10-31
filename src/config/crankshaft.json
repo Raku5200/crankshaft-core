@@ -53,7 +53,9 @@
         "microphone_enabled": true,
         "input_enabled": true,
         "sensor_enabled": true,
-        "bluetooth_enabled": true
+        "bluetooth_enabled": true,
+        "media_status": true,
+        "navigation_status": true
       },
       "video": {
         "resolution": {
@@ -124,6 +126,27 @@
     },
     "bluetooth": {
       "discovery_timeout_seconds": 60
+    },
+    "ibus": {
+      "ike": {
+        "alert_distance_m": 200,
+        "scroll_interval_ms": 450,
+        "glyphs": {
+          "left": "<",
+          "right": ">",
+          "slight_left": "\\",
+          "slight_right": "/",
+          "sharp_left": "<<",
+          "sharp_right": ">>",
+          "straight": "^",
+          "u_turn": "U",
+          "keep_left": "<|",
+          "keep_right": "|>",
+          "roundabout": "O",
+          "destination": "*",
+          "music": ""
+        }
+      }
     }
   },
   "ui": {

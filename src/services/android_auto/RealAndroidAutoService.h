@@ -25,12 +25,15 @@
 #include <QElapsedTimer>
 class QTimer;
 #include <boost/asio.hpp>
+#include <functional>
 #include <memory>
 
 #include "../../hal/multimedia/IAudioMixer.h"
 #include "../../hal/multimedia/IVideoDecoder.h"
 #include "AndroidAutoService.h"
 #include "../../hal/wireless/WirelessAABootstrap.h"
+#include "../ibus/IkeText.h"
+#include "ProjectionInfo.h"
 
 // Forward declarations
 class SessionStore;
@@ -45,6 +48,8 @@ class AASensorEventHandler;
 class AAMicrophoneEventHandler;
 class AABluetoothEventHandler;
 class AAWifiProjectionEventHandler;
+class AAMediaStatusEventHandler;
+class AANavigationEventHandler;
 class IWirelessNetworkManager;
 class GStreamerWebRtcBridge;
 
@@ -113,12 +118,19 @@ namespace wifiprojection {
 class IWifiProjectionServiceEventHandler;
 class IWifiProjectionService;
 }  // namespace wifiprojection
+namespace mediaplaybackstatus {
+class MediaPlaybackStatusService;
+}  // namespace mediaplaybackstatus
 namespace control {
 class IControlServiceChannelEventHandler;
 class ControlServiceChannel;
 }  // namespace control
 }  // namespace channel
 }  // namespace aasdk
+
+namespace crankshaft::android_auto {
+class NavigationClusterChannel;
+}  // namespace crankshaft::android_auto
 
 // Boost.Asio types included via headers
 
@@ -270,6 +282,16 @@ class RealAndroidAutoService : public AndroidAutoService {
   friend class AASensorEventHandler;
   friend class AABluetoothEventHandler;
   friend class AAWifiProjectionEventHandler;
+  friend class AAMediaStatusEventHandler;
+  friend class AANavigationEventHandler;
+
+  // Now playing / turn-by-turn from the phone (media playback status and
+  // navigation status channels). Updated on the Qt thread only.
+  void applyNowPlaying(const crankshaft::projection::NowPlaying& update, bool metadata, bool status);
+  void applyNavigation(const std::function<void(crankshaft::projection::NavigationGuidance&)>& change);
+  void resetProjectionInfo();
+  void publishClusterText();
+  void loadClusterTextConfig();
 
   void setupAASDK();
   void cleanupAASDK();
@@ -542,6 +564,9 @@ class RealAndroidAutoService : public AndroidAutoService {
   std::shared_ptr<aasdk::channel::wifiprojection::IWifiProjectionService>
       m_wifiProjectionChannel;
   std::shared_ptr<aasdk::channel::mediasource::audio::MicrophoneAudioChannel> m_microphoneChannel;
+  std::shared_ptr<aasdk::channel::mediaplaybackstatus::MediaPlaybackStatusService>
+      m_mediaStatusChannel;
+  std::shared_ptr<crankshaft::android_auto::NavigationClusterChannel> m_navigationChannel;
   std::shared_ptr<aasdk::channel::control::ControlServiceChannel> m_controlChannel;
   std::shared_ptr<AAControlEventHandler> m_controlEventHandler;
   int m_controlVersionRequestAttempts{0};
@@ -570,6 +595,16 @@ class RealAndroidAutoService : public AndroidAutoService {
   std::shared_ptr<AAMicrophoneEventHandler> m_microphoneEventHandler;
   std::shared_ptr<AABluetoothEventHandler> m_bluetoothEventHandler;
   std::shared_ptr<AAWifiProjectionEventHandler> m_wifiProjectionEventHandler;
+  std::shared_ptr<AAMediaStatusEventHandler> m_mediaStatusEventHandler;
+  std::shared_ptr<AANavigationEventHandler> m_navigationEventHandler;
+
+  crankshaft::projection::NowPlaying m_nowPlaying;
+  crankshaft::projection::NavigationGuidance m_navigationGuidance;
+  crankshaft::ibus::IkeGlyphs m_ikeGlyphs;
+  QTimer* m_clusterScrollTimer{nullptr};
+  int m_clusterScrollStep{0};
+  int m_clusterAlertDistanceMeters{200};
+  QVariantMap m_lastClusterText;
 
   // Multimedia components
   std::unique_ptr<IVideoDecoder> m_videoDecoder;

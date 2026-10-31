@@ -300,6 +300,22 @@ class AndroidAutoService : public QObject {
    * @brief Emitted when projection channel readiness changes
    */
   void projectionStatusChanged(const QJsonObject& status);
+
+  /**
+   * @brief Track reported by the phone (song, artist, album, playing, position).
+   */
+  void nowPlayingChanged(const QVariantMap& nowPlaying);
+
+  /**
+   * @brief Turn-by-turn guidance reported by the phone (maneuver, road, distance, ETA).
+   */
+  void navigationChanged(const QVariantMap& navigation);
+
+  /**
+   * @brief 20-character instrument cluster (IKE) text derived from the above,
+   *        plus the IBus frames that would display it.
+   */
+  void clusterTextChanged(const QVariantMap& clusterText);
 };
 
 using AndroidAutoServicePtr = std::shared_ptr<AndroidAutoService>;

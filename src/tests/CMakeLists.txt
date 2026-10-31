@@ -7,6 +7,7 @@ add_executable(crankshaft-core-tests
     test_android_auto_transport_mode.cpp
     test_websocket_client_contract.cpp
     test_wireless_aa_bootstrap.cpp
+    test_ike_text.cpp
 )
 
 target_include_directories(crankshaft-core-tests PRIVATE
