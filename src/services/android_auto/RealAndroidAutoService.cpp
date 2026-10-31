@@ -7728,6 +7728,24 @@ void RealAndroidAutoService::onChannelError(const QString& channelName, const QS
     dumpControlTrace(QStringLiteral("channel_error_control"));
   }
 
+  // A failed TLS record (e.g. SSL_READ / SSL_ERROR_SSL on the video channel)
+  // means the encrypted stream is out of sync for every channel; re-arming or a
+  // grace period cannot fix it. Drop the session and reconnect without showing
+  // an error dialog.
+  if (crankshaft::aasdk_error_classification::isSslStreamErrorText(error) &&
+      (m_state == ConnectionState::CONNECTED || m_state == ConnectionState::CONNECTING)) {
+    ++m_sslStreamErrorCount;
+    aaLogWarning("channelError",
+                 QString("channel=%1 state=%2 details=%3 -> encrypted stream failed (count=%4), "
+                         "reconnecting")
+                     .arg(channelName)
+                     .arg(connectionStateToString(m_state))
+                     .arg(error)
+                     .arg(m_sslStreamErrorCount));
+    performImmediateTransportRecovery(QStringLiteral("ssl_stream_error"));
+    return;
+  }
+
   const bool isTransferTimeout = isUsbTransferTimeoutErrorText(error);
   const bool isNoDevice =
       isUsbTransferNoDeviceErrorText(error) || isTransportNoDeviceErrorText(error);

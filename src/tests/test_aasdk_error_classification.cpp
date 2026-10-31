@@ -278,3 +278,32 @@ TEST_F(RecoveryClassificationInvariantsTest,
   EXPECT_FALSE(isTransportNoDeviceErrorText(err));
   EXPECT_TRUE(isOperationAbortedErrorText(err));
 }
+
+// ---------------------------------------------------------------------------
+// isSslStreamErrorText
+// ---------------------------------------------------------------------------
+class IsSslStreamErrorTextTest : public ::testing::Test {};
+
+TEST_F(IsSslStreamErrorTextTest, SslReadSslError_IsStreamError) {
+  // "video channel error: AASDK Error: 26, Native Code: 1" seen on a Pi Zero 2 W
+  EXPECT_TRUE(isSslStreamErrorText(
+      makeAasdkErrorString(26, 1, QStringLiteral("decrypt sslRead<=0 frameLength=100"))));
+}
+
+TEST_F(IsSslStreamErrorTextTest, SslHandshakeAndWrite_AreStreamErrors) {
+  EXPECT_TRUE(isSslStreamErrorText(makeAasdkErrorString(24, 1)));
+  EXPECT_TRUE(isSslStreamErrorText(makeAasdkErrorString(25, 1)));
+  EXPECT_TRUE(isSslStreamErrorText(makeAasdkErrorString(28, 0)));
+}
+
+TEST_F(IsSslStreamErrorTextTest, NoDeviceNative5_IsLeftToNoDevicePath) {
+  EXPECT_FALSE(isSslStreamErrorText(makeAasdkErrorString(26, 5)));
+  EXPECT_FALSE(isSslStreamErrorText(makeAasdkErrorString(25, 5)));
+}
+
+TEST_F(IsSslStreamErrorTextTest, OtherCodes_AreNotStreamErrors) {
+  EXPECT_FALSE(isSslStreamErrorText(makeAasdkErrorString(10, 1)));
+  EXPECT_FALSE(isSslStreamErrorText(makeAasdkErrorString(2, 1)));
+  EXPECT_FALSE(isSslStreamErrorText(makeAasdkErrorString(30, 0)));
+  EXPECT_FALSE(isSslStreamErrorText(makeAasdkErrorString(33, 1)));
+}

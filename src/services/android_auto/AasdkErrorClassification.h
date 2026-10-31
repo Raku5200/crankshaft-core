@@ -35,14 +35,18 @@
 // AASDK error string format:
 //   "AASDK Error: <code>, Native Code: <signed-decimal>, Additional Information: <msg>"
 //
-// Relevant error codes:
+// Relevant error codes (aasdk/Error/ErrorCode.hpp):
 //   10 = USB_TRANSFER     (libusb transfer completion callback error)
-//   25 = SSL_WRAPPER      (OpenSSL wrapper error)
-//   26 = SEND_HEADER      (messenger send header error)
-//   27 = SEND_PAYLOAD     (messenger send payload error)
-//   28 = RECV_HEADER      (messenger receive header error)
-//   33 = RECV_PAYLOAD     (messenger receive payload error)
+//   24 = SSL_HANDSHAKE
+//   25 = SSL_WRITE        (Cryptor::encrypt)
+//   26 = SSL_READ         (Cryptor::decrypt)
+//   27 = SSL_BIO_READ
+//   28 = SSL_BIO_WRITE
 //   30 = OPERATION_ABORTED
+//   33 = TCP_TRANSFER     (wireless transport)
+//
+// Native code for the SSL_* errors is the OpenSSL SSL_get_error() value:
+//   1 = SSL_ERROR_SSL (e.g. bad record MAC / corrupted record), 5 = SSL_ERROR_SYSCALL.
 //
 // Relevant libusb transfer status codes (Native Code for USB_TRANSFER errors):
 //   1  = LIBUSB_TRANSFER_ERROR
@@ -136,6 +140,29 @@ inline auto isTransportNoDeviceErrorText(const QString& errorText) -> bool {
 inline auto isSslWrapperNoDeviceErrorText(const QString& errorText) -> bool {
   return errorText.contains(QStringLiteral("AASDK Error: 25")) &&
          errorText.contains(QStringLiteral("Native Code: 5"));
+}
+
+/// Returns true when the encrypted Android Auto stream itself has failed
+/// (SSL_HANDSHAKE / SSL_WRITE / SSL_READ / SSL_BIO_*, AASDK codes 24-28) for any
+/// reason other than the device disappearing (native 5, handled as no-device).
+///
+/// The TLS session cannot be resynchronised after a failed record, so these are
+/// not re-armable: the only recovery is to drop the session and let the phone
+/// reconnect. Seen in the field as "video channel error: AASDK Error: 26,
+/// Native Code: 1" (SSL_READ / SSL_ERROR_SSL), which previously left the head
+/// unit stuck on an error dialog.
+inline auto isSslStreamErrorText(const QString& errorText) -> bool {
+  if (errorText.contains(QStringLiteral("Native Code: 5,")) ||
+      errorText.endsWith(QStringLiteral("Native Code: 5"))) {
+    return false;
+  }
+  for (int code = 24; code <= 28; ++code) {
+    const QString prefix = QStringLiteral("AASDK Error: %1,").arg(code);
+    if (errorText.contains(prefix)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /// Returns true when the error represents an OPERATION_ABORTED (AASDK code 30).

@@ -550,6 +550,7 @@ class RealAndroidAutoService : public AndroidAutoService {
   qint64 m_controlVersionLastRequestMs{0};
   int m_controlSendNative2ConsecutiveTimeouts{0};
   int m_controlTimeoutRecoveryCount{0};
+  int m_sslStreamErrorCount{0};  // encrypted-stream failures recovered by reconnecting
   bool m_forceCleanupUsbResetOnce{false};
   bool m_controlHandshakeAwaitingActivation{false};
   qint64 m_controlHandshakeStartedMs{0};
