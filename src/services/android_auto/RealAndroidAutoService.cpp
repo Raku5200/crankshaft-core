@@ -20,6 +20,15 @@
 #include "AasdkErrorClassification.h"
 #include "RealAndroidAutoService.h"
 
+#if __has_include(<aap_protobuf/service/media/shared/message/UiConfig.pb.h>)
+#include <aap_protobuf/service/media/shared/message/UiConfig.pb.h>
+#define CRANKSHAFT_AA_UI_CONFIG 1
+#else
+#define CRANKSHAFT_AA_UI_CONFIG 0
+#endif
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDBusVariant>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
@@ -1032,6 +1041,19 @@ static void appendVideoSinkFeature(
   videoConfig->set_width_margin(static_cast<uint32_t>(std::max(0, widthMargin)));
   videoConfig->set_height_margin(static_cast<uint32_t>(std::max(0, heightMargin)));
   videoConfig->set_density(static_cast<uint32_t>(std::max(80, configuredDensity)));
+
+#if CRANKSHAFT_AA_UI_CONFIG
+  // Strip along the bottom covered by the UI's MK4 info bar. Android Auto
+  // keeps its own controls (media bar, buttons) out of the inset but still
+  // draws the map underneath, so nothing interactive ends up hidden.
+  const int insetBottom = getBoundedConfigValue(
+      QStringLiteral("core.android_auto.video.content_inset_bottom"), 48, 0, 400);
+  if (insetBottom > 0) {
+    auto* uiConfig = videoConfig->mutable_ui_config();
+    uiConfig->mutable_content_insets()->set_bottom(static_cast<uint32_t>(insetBottom));
+    uiConfig->mutable_stable_content_insets()->set_bottom(static_cast<uint32_t>(insetBottom));
+  }
+#endif
 }
 
 static void appendAudioSinkFeature(
@@ -1128,6 +1150,30 @@ static void appendSensorSourceFeature(
       aap_protobuf::service::sensorsource::message::SensorType::SENSOR_NIGHT_MODE);
 }
 
+// The head unit's real Bluetooth address (BlueZ hci0), or empty when there is
+// no adapter. Android Auto connects to this address for calls/media after
+// projection starts, so a placeholder makes the phone show "Can't
+// communicate with 00:11:22:33:44:55" on every connect.
+static QString localBluetoothAddress() {
+  static QString cached;
+  if (!cached.isEmpty()) {
+    return cached;
+  }
+  QDBusMessage call = QDBusMessage::createMethodCall(
+      QStringLiteral("org.bluez"), QStringLiteral("/org/bluez/hci0"),
+      QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("Get"));
+  call << QStringLiteral("org.bluez.Adapter1") << QStringLiteral("Address");
+  const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 1000);
+  if (reply.type() == QDBusMessage::ReplyMessage && !reply.arguments().isEmpty()) {
+    const QString address =
+        qvariant_cast<QDBusVariant>(reply.arguments().constFirst()).variant().toString();
+    if (address.size() == 17) {
+      cached = address.toUpper();
+    }
+  }
+  return cached;
+}
+
 static void appendBluetoothFeature(
     aap_protobuf::service::control::message::ServiceDiscoveryResponse& response,
     const std::shared_ptr<aasdk::channel::bluetooth::BluetoothService>& bluetoothChannel) {
@@ -1135,10 +1181,19 @@ static void appendBluetoothFeature(
     return;
   }
 
+  const QString address = localBluetoothAddress();
+  if (address.isEmpty()) {
+    // Better no Bluetooth service than one pointing the phone at an address
+    // that does not exist.
+    aaLogWarning("control", QStringLiteral("No Bluetooth adapter address; not advertising the Bluetooth service"));
+    return;
+  }
+
   auto* service = response.add_channels();
   service->set_id(static_cast<uint32_t>(bluetoothChannel->getId()));
   auto* bluetoothService = service->mutable_bluetooth_service();
-  bluetoothService->set_car_address("00:11:22:33:44:55");
+  bluetoothService->set_car_address(address.toStdString());
+  aaLogInfo("control", QString("Advertising Bluetooth address %1").arg(address));
   bluetoothService->add_supported_pairing_methods(
       aap_protobuf::service::bluetooth::message::BLUETOOTH_PAIRING_NUMERIC_COMPARISON);
 }

@@ -67,7 +67,8 @@
         "negotiated_height": 480,
         "density": 140,
         "width_margin": 0,
-        "height_margin": 0
+        "height_margin": 0,
+        "content_inset_bottom": 48
       },
       "decode": {
         "enabled": true,

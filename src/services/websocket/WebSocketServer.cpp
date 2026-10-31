@@ -1274,28 +1274,19 @@ void WebSocketServer::setupAndroidAutoConnections() {
             if (!hasAnySubscriberForTopic(QStringLiteral("android-auto/media/video-frame"))) {
               return;
             }
-            if (!m_videoFrameTimer.isValid()) {
-              m_videoFrameTimer.start();
-            }
-            const qint64 nowMs = m_videoFrameTimer.elapsed();
-            // Always forward the first H.264 access/config unit.  With a fresh
-            // timer, nowMs can be less than m_videoFrameIntervalMs, which used
-            // to drop the first SPS/PPS payload and leave the UI decoder
-            // waiting indefinitely for parameter sets.
-            const bool firstH264Broadcast = (m_h264BroadcastCount == 0);
-            if (!firstH264Broadcast &&
-                (nowMs - m_lastVideoFrameBroadcastMs) < m_videoFrameIntervalMs) {
-              return;
-            }
-            m_lastVideoFrameBroadcastMs = nowMs;
+            // Every encoded frame must reach the decoder. H.264 P-frames only
+            // carry the difference to the previous frame, so the old 66 ms
+            // rate limit (shared with the raw RGBA path) silently dropped
+            // about half of a 30 fps stream and left the picture smeared and
+            // blocky until the next keyframe. The phone already paces the
+            // stream (and is asked for 30 fps); never thin it out here.
 
             ++m_h264BroadcastCount;
             if (m_h264BroadcastCount == 1 || (m_h264BroadcastCount % 30) == 0) {
               Logger::instance().info(
-                  QString("[WebSocketServer] H.264 broadcast: count=%1 sourceBytes=%2 throttleMs=%3")
+                  QString("[WebSocketServer] H.264 broadcast: count=%1 sourceBytes=%2")
                       .arg(m_h264BroadcastCount)
-                      .arg(frameData.size())
-                      .arg(m_videoFrameIntervalMs));
+                      .arg(frameData.size()));
             }
 
             QByteArray broadcastFrame = frameData;
