@@ -108,6 +108,7 @@ set(CORE_SOURCES
   services/android_auto/RealAndroidAutoService.cpp
   services/android_auto/AasdkErrorClassification.h
   services/android_auto/WiFiManagerWirelessNetworkManager.cpp
+  services/android_auto/HostapdWirelessNetworkManager.cpp
   services/android_auto/ProtocolHelpers.cpp
   services/android_auto/ProjectionInfo.cpp
   services/android_auto/NavigationClusterChannel.cpp
@@ -303,6 +304,20 @@ install(FILES ${CMAKE_SOURCE_DIR}/packaging/core/polkit/50-crankshaft-networkman
   COMPONENT core
 )
 
+# Wireless AA hotspot (hostapd): helper, unit, and polkit rule letting core manage it
+install(FILES ${CMAKE_SOURCE_DIR}/packaging/core/hotspot/51-crankshaft-aa-hotspot.rules
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/polkit-1/rules.d
+  COMPONENT core
+)
+install(PROGRAMS ${CMAKE_SOURCE_DIR}/packaging/core/hotspot/crankshaft-aa-hotspot
+  DESTINATION lib/crankshaft
+  COMPONENT core
+)
+install(FILES ${CMAKE_SOURCE_DIR}/packaging/core/hotspot/crankshaft-aa-hotspot.service
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/system
+  COMPONENT core
+)
+
 # Install systemd service unit
 install(FILES ${CMAKE_SOURCE_DIR}/packaging/core/crankshaft-core.service
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/system
@@ -366,7 +381,7 @@ set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
 )
 # Keep explicit Qt/system runtime dependencies and allow both legacy and t64
 # package names so dependencies resolve across Debian/Ubuntu releases.
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "libaasdk | libaasdk-amd64, libqt6core6 | libqt6core6t64, libqt6network6 | libqt6network6t64, libqt6websockets6 | libqt6websockets6t64, libqt6gui6 | libqt6gui6t64, libqt6dbus6 | libqt6dbus6t64, libqt6sql6 | libqt6sql6t64, libqt6bluetooth6 | libqt6bluetooth6t64, libqt6multimedia6 | libqt6multimedia6t64, gstreamer1.0-tools, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-nice, gstreamer1.0-libav, libgstreamer1.0-0 | libgstreamer1.0-0t64, libgstreamer-plugins-base1.0-0 | libgstreamer-plugins-base1.0-0t64, libgstreamer-plugins-bad1.0-0 | libgstreamer-plugins-bad1.0-0t64, libnice10 | libnice10t64, libsrtp2-1 | libsrtp2-1t64, dbus, libusb-1.0-0, libssl3 | libssl3t64, libprotobuf32 | libprotobuf32t64, libasound2 | libasound2t64, libpulse0 | libpulse0t64")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "libaasdk | libaasdk-amd64, libqt6core6 | libqt6core6t64, libqt6network6 | libqt6network6t64, libqt6websockets6 | libqt6websockets6t64, libqt6gui6 | libqt6gui6t64, libqt6dbus6 | libqt6dbus6t64, libqt6sql6 | libqt6sql6t64, libqt6bluetooth6 | libqt6bluetooth6t64, libqt6multimedia6 | libqt6multimedia6t64, gstreamer1.0-tools, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-nice, gstreamer1.0-libav, libgstreamer1.0-0 | libgstreamer1.0-0t64, libgstreamer-plugins-base1.0-0 | libgstreamer-plugins-base1.0-0t64, libgstreamer-plugins-bad1.0-0 | libgstreamer-plugins-bad1.0-0t64, libnice10 | libnice10t64, libsrtp2-1 | libsrtp2-1t64, dbus, libusb-1.0-0, libssl3 | libssl3t64, libprotobuf32 | libprotobuf32t64, libasound2 | libasound2t64, libpulse0 | libpulse0t64, hostapd, dnsmasq-base, iproute2, libqt6sql6-sqlite")
 set(CPACK_COMPONENTS_ALL core)
 
 # Resolve Debian package architecture for filename generation

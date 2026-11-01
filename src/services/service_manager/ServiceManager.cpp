@@ -30,10 +30,39 @@
 #include "../../hal/wireless/BluetoothManager.h"
 #include "../../hal/wireless/WiFiManager.h"
 #include "../android_auto/AndroidAutoService.h"
+#include "../android_auto/HostapdWirelessNetworkManager.h"
 #include "../android_auto/WiFiManagerWirelessNetworkManager.h"
 #include "../config/ConfigService.h"
 #include "../logging/Logger.h"
 #include "../profile/ProfileManager.h"
+
+namespace {
+
+// Wireless AA hotspot backend: "hostapd" (default when installed) or
+// "networkmanager". NetworkManager hotspots always offer WPA-PSK-SHA256, which
+// the Pi's brcmfmac can't complete, so phones fail to join them.
+std::shared_ptr<IWirelessNetworkManager> makeHotspotManager(WiFiManager* wifiManager) {
+  const QString backend = ConfigService::instance()
+                              .get(QStringLiteral("core.android_auto.wireless.hotspot.backend"),
+                                   QStringLiteral("auto"))
+                              .toString()
+                              .trimmed()
+                              .toLower();
+  const bool wantHostapd = backend == QStringLiteral("hostapd") ||
+                           (backend != QStringLiteral("networkmanager") &&
+                            HostapdWirelessNetworkManager::isAvailable());
+  if (wantHostapd) {
+    Logger::instance().info("[ServiceManager]      Wireless AA hotspot backend: hostapd");
+    return std::make_shared<HostapdWirelessNetworkManager>();
+  }
+  if (wifiManager) {
+    Logger::instance().info("[ServiceManager]      Wireless AA hotspot backend: NetworkManager");
+    return std::make_shared<WiFiManagerWirelessNetworkManager>(wifiManager);
+  }
+  return nullptr;
+}
+
+}  // namespace
 
 ServiceManager::ServiceManager(ProfileManager* profileManager, QObject* parent)
     : QObject(parent),
@@ -311,9 +340,8 @@ bool ServiceManager::startAndroidAutoService(const DeviceConfig& device) {
     return false;
   }
 
-  if (m_wifiManager) {
-    m_androidAutoService->setWirelessNetworkManager(
-        std::make_shared<WiFiManagerWirelessNetworkManager>(m_wifiManager));
+  if (auto hotspot = makeHotspotManager(m_wifiManager)) {
+    m_androidAutoService->setWirelessNetworkManager(hotspot);
   } else {
     Logger::instance().warning(
         "[ServiceManager]      WiFi manager not running; wireless hotspot orchestration unavailable");
@@ -638,8 +666,7 @@ bool ServiceManager::startWiFiService(const DeviceConfig& device) {
   Logger::instance().info("[ServiceManager] WiFi service started successfully");
   if (m_androidAutoService) {
     // Android Auto started earlier (e.g. WiFi restarted on its own).
-    m_androidAutoService->setWirelessNetworkManager(
-        std::make_shared<WiFiManagerWirelessNetworkManager>(m_wifiManager));
+    m_androidAutoService->setWirelessNetworkManager(makeHotspotManager(m_wifiManager));
   }
   return true;
 }

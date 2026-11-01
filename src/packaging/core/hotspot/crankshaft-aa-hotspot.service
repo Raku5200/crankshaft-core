@@ -1,0 +1,14 @@
+# Project: Crankshaft
+# Wireless Android Auto access point (hostapd + dnsmasq on wlan0).
+# Started and stopped by crankshaft-core; not enabled at boot.
+[Unit]
+Description=Crankshaft wireless Android Auto hotspot
+After=NetworkManager.service
+PartOf=crankshaft-core.service
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/crankshaft/crankshaft-aa-hotspot start
+ExecStopPost=/usr/lib/crankshaft/crankshaft-aa-hotspot stop
+Restart=on-failure
+RestartSec=3

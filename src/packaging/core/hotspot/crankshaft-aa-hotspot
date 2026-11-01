@@ -1,0 +1,98 @@
+#!/bin/sh
+# Project: Crankshaft
+# Wi-Fi access point for wireless Android Auto, run by crankshaft-aa-hotspot.service.
+#
+# NetworkManager's hotspot always offers WPA-PSK-SHA256 next to WPA-PSK when
+# wpa_supplicant supports PMF. The Pi's brcmfmac (BCM43430) can't complete
+# that handshake, so phones fail with "possible PSK mismatch". hostapd lets us
+# offer plain WPA2-PSK (CCMP) only. crankshaft-core writes the SSID/password to
+# /run/crankshaft/aa-hotspot.env and restarts this service.
+set -eu
+
+IFACE=wlan0
+ADDR=10.42.0.1
+ENV_FILE=/run/crankshaft/aa-hotspot.env
+RUN_DIR=/run/crankshaft-aa-hotspot
+
+value() {
+    sed -n "s/^$1=//p" "$ENV_FILE" | head -n1
+}
+
+case "${1:-start}" in
+start)
+    if [ ! -r "$ENV_FILE" ]; then
+        echo "crankshaft-aa-hotspot: $ENV_FILE missing" >&2
+        exit 1
+    fi
+    SSID=$(value SSID)
+    PSK=$(value PSK)
+    CHANNEL=$(value CHANNEL)
+    if [ -z "$SSID" ]; then
+        echo "crankshaft-aa-hotspot: no SSID" >&2
+        exit 1
+    fi
+    case "$CHANNEL" in
+        ''|0) CHANNEL=6 ;;
+    esac
+
+    mkdir -p "$RUN_DIR"
+    chmod 700 "$RUN_DIR"
+
+    # Left over from older images; NetworkManager fails to load it.
+    rm -f /etc/NetworkManager/system-connections/Crankshaft-WirelessAA-Hotspot.nmconnection
+
+    if command -v nmcli >/dev/null 2>&1; then
+        nmcli device set "$IFACE" managed no 2>/dev/null || true
+    fi
+    rfkill unblock wifi 2>/dev/null || true
+    ip addr flush dev "$IFACE" || true
+    ip link set "$IFACE" up
+    ip addr add "$ADDR/24" dev "$IFACE"
+
+    {
+        echo "interface=$IFACE"
+        echo "driver=nl80211"
+        echo "ssid=$SSID"
+        echo "hw_mode=g"
+        echo "channel=$CHANNEL"
+        echo "ieee80211n=1"
+        echo "wmm_enabled=1"
+        echo "auth_algs=1"
+        if [ -n "$PSK" ]; then
+            echo "wpa=2"
+            echo "wpa_key_mgmt=WPA-PSK"
+            echo "rsn_pairwise=CCMP"
+            echo "wpa_passphrase=$PSK"
+        fi
+    } > "$RUN_DIR/hostapd.conf"
+    chmod 600 "$RUN_DIR/hostapd.conf"
+
+    # DHCP only (port=0: no DNS). The phone gets 10.42.0.x; the Pi is 10.42.0.1.
+    if [ -f "$RUN_DIR/dnsmasq.pid" ]; then
+        kill "$(cat "$RUN_DIR/dnsmasq.pid")" 2>/dev/null || true
+    fi
+    dnsmasq --conf-file=/dev/null \
+        --interface="$IFACE" --bind-interfaces --except-interface=lo \
+        --port=0 \
+        --dhcp-range=10.42.0.10,10.42.0.254,255.255.255.0,1h \
+        --dhcp-authoritative \
+        --dhcp-leasefile="$RUN_DIR/dnsmasq.leases" \
+        --pid-file="$RUN_DIR/dnsmasq.pid"
+
+    exec hostapd "$RUN_DIR/hostapd.conf"
+    ;;
+stop)
+    if [ -f "$RUN_DIR/dnsmasq.pid" ]; then
+        kill "$(cat "$RUN_DIR/dnsmasq.pid")" 2>/dev/null || true
+        rm -f "$RUN_DIR/dnsmasq.pid"
+    fi
+    ip addr flush dev "$IFACE" 2>/dev/null || true
+    if command -v nmcli >/dev/null 2>&1; then
+        nmcli device set "$IFACE" managed yes 2>/dev/null || true
+    fi
+    ;;
+*)
+    echo "usage: $0 start|stop" >&2
+    exit 2
+    ;;
+esac

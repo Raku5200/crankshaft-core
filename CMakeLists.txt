@@ -149,6 +149,7 @@ set(CORE_SOURCES
   services/android_auto/NavigationClusterChannel.cpp
   services/ibus/IkeText.cpp
   services/android_auto/WiFiManagerWirelessNetworkManager.cpp
+  services/android_auto/HostapdWirelessNetworkManager.cpp
   services/android_auto/ProtocolHelpers.cpp
   services/preferences/PreferencesService.cpp
   services/session/SessionStore.cpp

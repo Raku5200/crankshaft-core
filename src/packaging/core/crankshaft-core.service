@@ -48,6 +48,9 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+# /run/crankshaft: wireless AA hotspot settings for crankshaft-aa-hotspot.service
+RuntimeDirectory=crankshaft
+RuntimeDirectoryMode=0750
 ReadWritePaths=/var/lib/crankshaft /var/log/crankshaft /var/cache/crankshaft
 ProtectKernelTunables=true
 ProtectKernelModules=true
