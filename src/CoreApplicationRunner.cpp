@@ -27,6 +27,17 @@
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QStringList>
+#include <QTimer>
+
+#include <sys/syscall.h>
+#include <unistd.h>
+
+#include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <fstream>
+#include <string>
+#include <thread>
 
 #include "services/config/ConfigService.h"
 #include "services/eventbus/EventBus.h"
@@ -36,6 +47,59 @@
 #include "services/websocket/WebSocketServer.h"
 
 namespace {
+
+// Logs when the main (Qt) thread stops running its event loop for more than
+// 2 s, with the kernel function it is waiting in, e.g. a USB ioctl or a lock.
+// Diagnoses start-up/connection stalls on the Pi; costs nothing otherwise.
+class MainThreadStallWatchdog {
+ public:
+  void start(QCoreApplication* app) {
+    m_mainTid = static_cast<long>(::syscall(SYS_gettid));
+    m_beatMs.store(nowMs());
+    auto* beat = new QTimer(app);
+    QObject::connect(beat, &QTimer::timeout, [this]() { m_beatMs.store(nowMs()); });
+    beat->start(250);
+    std::thread([this]() { run(); }).detach();
+  }
+
+ private:
+  static auto nowMs() -> long long {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+  }
+  auto readProc(const char* leaf) const -> std::string {
+    std::ifstream in("/proc/self/task/" + std::to_string(m_mainTid) + "/" + leaf);
+    std::string line;
+    std::getline(in, line);
+    return line;
+  }
+  void run() {
+    bool stalled = false;
+    long long stallStart = 0;
+    for (;;) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      const long long now = nowMs();
+      const long long since = now - m_beatMs.load();
+      if (!stalled && since > 2000) {
+        stalled = true;
+        stallStart = m_beatMs.load();
+        std::fprintf(stderr, "[Watchdog] main thread stalled for %lld ms, waiting in %s (syscall %s)\n",
+                     since, readProc("wchan").c_str(), readProc("syscall").c_str());
+      } else if (stalled && since > 2000 && (since / 5000) != ((since - 500) / 5000)) {
+        std::fprintf(stderr, "[Watchdog] main thread still stalled (%lld ms), waiting in %s\n", since,
+                     readProc("wchan").c_str());
+      } else if (stalled && since <= 2000) {
+        stalled = false;
+        std::fprintf(stderr, "[Watchdog] main thread resumed after %lld ms\n",
+                     m_beatMs.load() - stallStart);
+      }
+    }
+  }
+
+  long m_mainTid{0};
+  std::atomic<long long> m_beatMs{0};
+};
 bool isVerboseUsbFlagPresent(int argc, char* argv[]) {
   for (int i = 1; i < argc; ++i) {
     const char* arg = argv[i];
@@ -98,6 +162,8 @@ int runCoreApplication(int argc, char* argv[], const CoreBuildInfo& buildInfo) {
   startupTimer.start();
 
   QCoreApplication app(argc, argv);
+  static MainThreadStallWatchdog stallWatchdog;
+  stallWatchdog.start(&app);
   app.setApplicationName("Crankshaft");
   app.setApplicationVersion("1.0.0");
   app.setOrganizationName("OpenCarDev");
