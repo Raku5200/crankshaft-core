@@ -19,6 +19,8 @@
 
 #include "ServiceManager.h"
 
+#include <algorithm>
+
 #include <QDateTime>
 #include <QTimer>
 
@@ -78,7 +80,20 @@ bool ServiceManager::startAllServices() {
   int successCount = 0;
   int failCount = 0;
 
-  for (const auto& device : activeProfile.devices) {
+  // Android Auto uses the WiFi manager for its wireless hotspot, so start
+  // WiFi and Bluetooth first whatever order the profile lists them in.
+  QList<DeviceConfig> devices = activeProfile.devices;
+  const auto startOrder = [](const DeviceConfig& d) {
+    const bool isAndroidAuto = d.type == QStringLiteral("AndroidAuto") ||
+                               d.name == QStringLiteral("AndroidAuto");
+    return isAndroidAuto ? 1 : 0;
+  };
+  std::stable_sort(devices.begin(), devices.end(),
+                   [&startOrder](const DeviceConfig& a, const DeviceConfig& b) {
+                     return startOrder(a) < startOrder(b);
+                   });
+
+  for (const auto& device : devices) {
     Logger::instance().info(
         QString("[ServiceManager] Processing device: %1 (type: %2, enabled: %3, useMock: %4)")
             .arg(device.name)
@@ -621,6 +636,11 @@ bool ServiceManager::startWiFiService(const DeviceConfig& device) {
   }
 
   Logger::instance().info("[ServiceManager] WiFi service started successfully");
+  if (m_androidAutoService) {
+    // Android Auto started earlier (e.g. WiFi restarted on its own).
+    m_androidAutoService->setWirelessNetworkManager(
+        std::make_shared<WiFiManagerWirelessNetworkManager>(m_wifiManager));
+  }
   return true;
 }
 
@@ -681,6 +701,10 @@ void ServiceManager::stopAndroidAutoService() {
 void ServiceManager::stopWiFiService() {
   if (m_wifiManager) {
     Logger::instance().info("[ServiceManager] Stopping WiFi service");
+    if (m_androidAutoService) {
+      // It holds a wrapper around m_wifiManager; don't leave it dangling.
+      m_androidAutoService->setWirelessNetworkManager(nullptr);
+    }
     m_wifiManager->deinitialise();
     delete m_wifiManager;
     m_wifiManager = nullptr;

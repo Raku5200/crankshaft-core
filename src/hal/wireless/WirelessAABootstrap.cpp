@@ -315,6 +315,13 @@ void WirelessAABluezAgent::AuthorizeService(const QDBusObjectPath& device, const
 void WirelessAABluezAgent::Cancel() { logInfo(QStringLiteral("Pairing request cancelled")); }
 
 // =============================================================================
+namespace {
+// How long a phone may hold the headset link without opening Android Auto
+// before we reconnect it, and how many times we do that per start().
+constexpr qint64 kHeadsetGraceMs = 15000;
+constexpr int kMaxHeadsetRetries = 3;
+}  // namespace
+
 // WirelessAABootstrap
 // =============================================================================
 
@@ -396,7 +403,11 @@ auto WirelessAABootstrap::start(WifiInfoProvider provider, const Options& option
   m_agentRegistered = registerAgent();
 
   m_running = true;
+  m_headsetRetries = 0;
+  m_headsetNudged.clear();
+  m_hspSinceMs.clear();
   openPairingWindow(options.pairingWindowSeconds);
+  logAdapterUuids();
 
   m_reconnectTimer = new QTimer(this);
   m_reconnectTimer->setInterval(qMax(5, options.reconnectIntervalSeconds) * 1000);
@@ -627,8 +638,32 @@ void WirelessAABootstrap::reconnectTick() {
             });
     return;
   }
-  if (!connectedNow.isEmpty() || candidates.isEmpty()) {
-    // A phone is connected: its Android Auto app decides whether to start.
+  if (!connectedNow.isEmpty()) {
+    // Like the AA wireless dongles: if the phone took the headset link but its
+    // Android Auto app never opened our channel, drop the link and make it
+    // again (a few times only, since this interrupts Bluetooth audio).
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    for (const QString& path : std::as_const(connectedNow)) {
+      const auto since = m_hspSinceMs.constFind(path);
+      if (since == m_hspSinceMs.constEnd() || now - *since < kHeadsetGraceMs) {
+        continue;
+      }
+      if (m_headsetRetries >= kMaxHeadsetRetries) {
+        if (m_headsetRetries == kMaxHeadsetRetries) {
+          ++m_headsetRetries;  // log once
+          logWarn(QStringLiteral(
+              "Phone %1 never opened the Android Auto wireless channel. On the phone check: "
+              "Android Auto > Wireless Android Auto is on, Wi-Fi is on, and this head unit "
+              "is not in Android Auto's rejected cars list").arg(path));
+        }
+        return;
+      }
+      reconnectHeadset(path);
+      return;
+    }
+    return;
+  }
+  if (candidates.isEmpty()) {
     return;
   }
 
@@ -651,6 +686,61 @@ void WirelessAABootstrap::reconnectTick() {
           });
 }
 
+void WirelessAABootstrap::reconnectHeadset(const QString& devicePath) {
+  ++m_headsetRetries;
+  m_hspSinceMs.remove(devicePath);
+  logInfo(QStringLiteral("Phone %1 has the headset link but no Android Auto; reconnecting it "
+                         "(attempt %2 of %3)")
+              .arg(devicePath)
+              .arg(m_headsetRetries)
+              .arg(kMaxHeadsetRetries));
+  QDBusInterface device(QLatin1String(BLUEZ_SERVICE), devicePath,
+                        QLatin1String(BLUEZ_DEVICE_INTERFACE), QDBusConnection::systemBus());
+  auto* watcher = new QDBusPendingCallWatcher(device.asyncCall(QStringLiteral("Disconnect")), this);
+  connect(watcher, &QDBusPendingCallWatcher::finished, this,
+          [this, devicePath](QDBusPendingCallWatcher* w) {
+            w->deleteLater();
+            // Give the phone a moment to tear the link down before asking again.
+            QTimer::singleShot(2000, this, [this, devicePath]() {
+              if (!m_running) {
+                return;
+              }
+              QDBusInterface dev(QLatin1String(BLUEZ_SERVICE), devicePath,
+                                 QLatin1String(BLUEZ_DEVICE_INTERFACE),
+                                 QDBusConnection::systemBus());
+              auto* again = new QDBusPendingCallWatcher(
+                  dev.asyncCall(QStringLiteral("ConnectProfile"), QLatin1String(HSP_AG_UUID)),
+                  this);
+              connect(again, &QDBusPendingCallWatcher::finished, this,
+                      [devicePath](QDBusPendingCallWatcher* r) {
+                        QDBusPendingReply<> reply = *r;
+                        if (reply.isError()) {
+                          logInfo(QStringLiteral("Headset reconnect to %1 failed (%2: %3)")
+                                      .arg(devicePath, reply.error().name(),
+                                           reply.error().message()));
+                        }
+                        r->deleteLater();
+                      });
+            });
+          });
+}
+
+void WirelessAABootstrap::logAdapterUuids() {
+  QDBusInterface props(QLatin1String(BLUEZ_SERVICE), m_adapterPath,
+                       QLatin1String(DBUS_PROPERTIES_INTERFACE), QDBusConnection::systemBus());
+  QDBusReply<QDBusVariant> uuids =
+      props.call(QStringLiteral("Get"), QLatin1String(BLUEZ_ADAPTER_INTERFACE),
+                 QStringLiteral("UUIDs"));
+  if (!uuids.isValid()) {
+    return;
+  }
+  const QStringList list = uuids.value().variant().toStringList();
+  const bool advertised = list.contains(QLatin1String(AA_WIRELESS_UUID), Qt::CaseInsensitive);
+  logInfo(QStringLiteral("Adapter advertises %1 service(s); Android Auto service %2")
+              .arg(list.size())
+              .arg(advertised ? QStringLiteral("present") : QStringLiteral("MISSING")));
+}
+
 // --- RFCOMM handshake --------------------------------------------------------
 
 void WirelessAABootstrap::onNewConnection(bool isAndroidAuto, const QDBusObjectPath& device,
@@ -668,7 +758,9 @@ void WirelessAABootstrap::onNewConnection(bool isAndroidAuto, const QDBusObjectP
       ::close(m_hspFds.take(devicePath));
     }
     m_hspFds.insert(devicePath, ownFd);
-    logInfo(QStringLiteral("Headset profile connected: %1").arg(devicePath));
+    m_hspSinceMs.insert(devicePath, QDateTime::currentMSecsSinceEpoch());
+    logInfo(QStringLiteral("Headset profile connected: %1. Waiting for the phone's Android Auto "
+                           "app to open the wireless channel").arg(devicePath));
     return;
   }
 
@@ -708,6 +800,7 @@ void WirelessAABootstrap::onRequestDisconnection(bool isAndroidAuto, const QDBus
     closeSession(devicePath);
   } else if (m_hspFds.contains(devicePath)) {
     ::close(m_hspFds.take(devicePath));
+    m_hspSinceMs.remove(devicePath);
   }
 }
 
@@ -854,4 +947,5 @@ void WirelessAABootstrap::closeAllSessions() {
     ::close(fd);
   }
   m_hspFds.clear();
+  m_hspSinceMs.clear();
 }

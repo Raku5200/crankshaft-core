@@ -242,4 +242,8 @@ class WirelessAABootstrap : public QObject {
   QHash<QString, RfcommSession> m_aaSessions;  // keyed by device object path
   QHash<QString, int> m_hspFds;                // held open so the link stays up
   QSet<QString> m_headsetNudged;               // connected phones already asked for HSP
+  QHash<QString, qint64> m_hspSinceMs;         // when each headset link came up
+  int m_headsetRetries{0};                     // reconnects since start() (capped)
+  void logAdapterUuids();
+  void reconnectHeadset(const QString& devicePath);
 };
