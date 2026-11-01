@@ -4932,6 +4932,7 @@ void RealAndroidAutoService::cleanupChannels() {
   m_telephonyAudioEventHandler.reset();
   m_controlEventHandler.reset();
   m_inputEventHandler.reset();
+  m_sensorEventHandler.reset();
   m_microphoneEventHandler.reset();
   m_bluetoothEventHandler.reset();
   m_mediaStatusEventHandler.reset();
