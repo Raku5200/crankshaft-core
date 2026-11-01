@@ -361,14 +361,41 @@ auto WirelessAABootstrap::start(WifiInfoProvider provider, const Options& option
   m_aaProfile = new WirelessAABluezProfile(this, true);
   if (bus.registerObject(QLatin1String(AA_PROFILE_PATH), m_aaProfile,
                          QDBusConnection::ExportAllSlots)) {
-    QVariantMap aaOptions;
-    aaOptions.insert(QStringLiteral("Name"), QStringLiteral("Android Auto Wireless"));
-    aaOptions.insert(QStringLiteral("Role"), QStringLiteral("server"));
-    aaOptions.insert(QStringLiteral("Channel"), QVariant::fromValue<quint16>(options.rfcommChannel));
-    aaOptions.insert(QStringLiteral("RequireAuthentication"), false);
-    aaOptions.insert(QStringLiteral("RequireAuthorization"), false);
-    m_aaProfileRegistered =
-        registerProfile(QLatin1String(AA_PROFILE_PATH), QLatin1String(AA_WIRELESS_UUID), aaOptions);
+    // BlueZ accepts the profile even when it cannot listen on the channel
+    // (e.g. its SIM Access plugin already owns RFCOMM 8), and then publishes no
+    // SDP record, so the phone never connects. The phone reads the channel from
+    // SDP, so any free channel works: try the configured one, then others.
+    QList<quint16> channels{options.rfcommChannel};
+    for (quint16 ch : {quint16(22), quint16(23), quint16(24), quint16(25)}) {
+      if (!channels.contains(ch)) {
+        channels.append(ch);
+      }
+    }
+    for (quint16 channel : channels) {
+      QVariantMap aaOptions;
+      aaOptions.insert(QStringLiteral("Name"), QStringLiteral("Android Auto Wireless"));
+      aaOptions.insert(QStringLiteral("Role"), QStringLiteral("server"));
+      aaOptions.insert(QStringLiteral("Channel"), QVariant::fromValue<quint16>(channel));
+      aaOptions.insert(QStringLiteral("RequireAuthentication"), false);
+      aaOptions.insert(QStringLiteral("RequireAuthorization"), false);
+      m_aaProfileRegistered = registerProfile(QLatin1String(AA_PROFILE_PATH),
+                                              QLatin1String(AA_WIRELESS_UUID), aaOptions);
+      if (!m_aaProfileRegistered) {
+        break;
+      }
+      if (adapterAdvertisesAndroidAuto()) {
+        m_rfcommChannel = channel;
+        break;
+      }
+      logWarn(QStringLiteral("RFCOMM channel %1 is in use (BlueZ published no Android Auto "
+                             "record); trying another channel")
+                  .arg(channel));
+      unregisterProfile(QLatin1String(AA_PROFILE_PATH));
+      m_aaProfileRegistered = false;
+    }
+    if (!m_aaProfileRegistered) {
+      logWarn(QStringLiteral("No free RFCOMM channel for Android Auto"));
+    }
   } else {
     logWarn(QStringLiteral("Could not export Android Auto profile object on D-Bus"));
   }
@@ -423,7 +450,7 @@ auto WirelessAABootstrap::start(WifiInfoProvider provider, const Options& option
 
   logInfo(QStringLiteral("Wireless Android Auto ready on %1 (RFCOMM channel %2)")
               .arg(m_adapterPath)
-              .arg(options.rfcommChannel));
+              .arg(m_rfcommChannel));
   return true;
 }
 
@@ -729,6 +756,19 @@ void WirelessAABootstrap::reconnectHeadset(const QString& devicePath) {
                       });
             });
           });
+}
+
+auto WirelessAABootstrap::adapterUuids() const -> QStringList {
+  QDBusInterface props(QLatin1String(BLUEZ_SERVICE), m_adapterPath,
+                       QLatin1String(DBUS_PROPERTIES_INTERFACE), QDBusConnection::systemBus());
+  QDBusReply<QDBusVariant> uuids =
+      props.call(QStringLiteral("Get"), QLatin1String(BLUEZ_ADAPTER_INTERFACE),
+                 QStringLiteral("UUIDs"));
+  return uuids.isValid() ? uuids.value().variant().toStringList() : QStringList{};
+}
+
+auto WirelessAABootstrap::adapterAdvertisesAndroidAuto() const -> bool {
+  return adapterUuids().contains(QLatin1String(AA_WIRELESS_UUID), Qt::CaseInsensitive);
 }
 
 void WirelessAABootstrap::logAdapterUuids() {

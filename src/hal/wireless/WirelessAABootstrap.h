@@ -245,5 +245,8 @@ class WirelessAABootstrap : public QObject {
   QHash<QString, qint64> m_hspSinceMs;         // when each headset link came up
   int m_headsetRetries{0};                     // reconnects since start() (capped)
   void logAdapterUuids();
+  QStringList adapterUuids() const;
+  bool adapterAdvertisesAndroidAuto() const;
+  quint16 m_rfcommChannel{0};
   void reconnectHeadset(const QString& devicePath);
 };
