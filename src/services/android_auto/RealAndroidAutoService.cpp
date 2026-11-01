@@ -1274,15 +1274,18 @@ static auto isRecoverableUsbTransferTimeout(const aasdk::error::Error& error) ->
           error.getNativeCode() == kLibusbTransferInterrupted);
 }
 
+// LIBUSB_TRANSFER_NO_DEVICE (5) is deliberately NOT here: it means the phone
+// was unplugged or left Android Auto mode. Re-arming the receive just fails
+// again every 120 ms forever, the session is never torn down and USB search
+// never restarts, so the phone only worked again after a reboot. It goes to
+// RealAndroidAutoService::onChannelError, which handles "no device".
 static auto isRecoverableUsbReceiveError(const aasdk::error::Error& error) -> bool {
   static constexpr uint32_t kLibusbTransferError = 1;
   static constexpr uint32_t kLibusbTransferTimedOut = 2;
-  static constexpr uint32_t kLibusbTransferNoDevice = 5;
   static constexpr uint32_t kLibusbTransferInterrupted = 4294967292u;  // -4
   return error.getCode() == aasdk::error::ErrorCode::USB_TRANSFER &&
          (error.getNativeCode() == kLibusbTransferError ||
           error.getNativeCode() == kLibusbTransferTimedOut ||
-          error.getNativeCode() == kLibusbTransferNoDevice ||
           error.getNativeCode() == kLibusbTransferInterrupted);
 }
 
@@ -7812,6 +7815,10 @@ void RealAndroidAutoService::transitionToState(ConnectionState newState) {
   emit connectionStateChanged(newState);
   publishProjectionStatus(QStringLiteral("connection_state_changed"));
 
+  if (newState != ConnectionState::CONNECTED && m_usbPresenceTimer) {
+    m_usbPresenceTimer->stop();
+  }
+
   // Map connection state to session state
   switch (newState) {
     case ConnectionState::CONNECTING:
@@ -7823,6 +7830,16 @@ void RealAndroidAutoService::transitionToState(ConnectionState newState) {
       transitionToSessionState(SessionState::ACTIVE);
       if (m_wirelessBootstrap) {
         m_wirelessBootstrap->setProjectionActive(true);
+      }
+      if (m_aoapDevice && !m_tcpSocket && m_libusbContext) {
+        if (!m_usbPresenceTimer) {
+          m_usbPresenceTimer = new QTimer(this);
+          m_usbPresenceTimer->setInterval(1000);
+          connect(m_usbPresenceTimer, &QTimer::timeout, this,
+                  &RealAndroidAutoService::checkUsbPhonePresent);
+        }
+        m_usbPresenceMisses = 0;
+        m_usbPresenceTimer->start();
       }
       break;
     case ConnectionState::DISCONNECTED:
@@ -7840,6 +7857,43 @@ void RealAndroidAutoService::transitionToState(ConnectionState newState) {
     default:
       break;
   }
+}
+
+void RealAndroidAutoService::checkUsbPhonePresent() {
+  if (m_state != ConnectionState::CONNECTED || !m_aoapDevice || !m_libusbContext ||
+      m_deviceGoneRecoveryScheduled) {
+    return;
+  }
+  static constexpr uint16_t kGoogleVid = 0x18D1;
+  static constexpr uint16_t kAoapPid = 0x2D00;
+  static constexpr uint16_t kAoapAdbPid = 0x2D01;
+
+  bool present = false;
+  libusb_device** list = nullptr;
+  const ssize_t count = libusb_get_device_list(m_libusbContext, &list);
+  if (count < 0) {
+    return;  // can't tell; try again next tick
+  }
+  for (ssize_t i = 0; i < count && !present; ++i) {
+    libusb_device_descriptor desc{};
+    if (libusb_get_device_descriptor(list[i], &desc) == 0 && desc.idVendor == kGoogleVid &&
+        (desc.idProduct == kAoapPid || desc.idProduct == kAoapAdbPid)) {
+      present = true;
+    }
+  }
+  libusb_free_device_list(list, 1);
+
+  if (present) {
+    m_usbPresenceMisses = 0;
+    return;
+  }
+  if (++m_usbPresenceMisses < 2) {
+    return;
+  }
+  m_usbPresenceTimer->stop();
+  aaLogWarning("usb", "Phone is no longer on the USB bus (unplugged or left Android Auto); "
+                      "ending the session and searching again");
+  performImmediateTransportRecovery(QStringLiteral("usb_device_gone"));
 }
 
 void RealAndroidAutoService::transitionToSessionState(SessionState newState) {
@@ -8387,7 +8441,7 @@ void RealAndroidAutoService::onChannelError(const QString& channelName, const QS
                      .arg(graceMaxErrors));
   }
 
-  if (isRecoverableReceiveError && m_state == ConnectionState::CONNECTED) {
+  if (isRecoverableReceiveError && !isNoDevice && m_state == ConnectionState::CONNECTED) {
     aaLogWarning(
         "channelError",
         QString("channel=%1 state=%2 details=%3 -> recoverable transport receive error, re-arming active receives")

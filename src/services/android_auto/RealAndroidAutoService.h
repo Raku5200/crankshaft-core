@@ -626,4 +626,10 @@ class RealAndroidAutoService : public AndroidAutoService {
 
   bool m_isInitialised{false};
   libusb_context* m_libusbContext{nullptr};
+  // While a USB session is up, check once a second that the phone is still on
+  // the bus. Unplugging (or leaving Android Auto on the phone) does not always
+  // produce a channel error that tears the session down.
+  QTimer* m_usbPresenceTimer{nullptr};
+  int m_usbPresenceMisses{0};
+  void checkUsbPhonePresent();
 };
