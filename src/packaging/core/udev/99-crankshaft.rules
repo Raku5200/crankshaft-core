@@ -28,7 +28,6 @@
 KERNEL=="sd*", GOTO="crankshaft_end"
 KERNEL=="sg*", GOTO="crankshaft_end"
 SUBSYSTEM!="usb", GOTO="crankshaft_end"
-ENV{DEVTYPE}!="usb_device", GOTO="crankshaft_end"
 
 # Android device vendors
 # Each rule only grants USB access; core finds the phone itself (libusb hotplug)
