@@ -38,5 +38,6 @@ class HostapdWirelessNetworkManager final : public IWirelessNetworkManager {
 
   bool m_started{false};
   QString m_ssid;
+  QString m_appliedConfig;  // SSID/PSK/channel the running hostapd was started with
   SecurityMode m_security{SecurityMode::Wpa2Psk};
 };

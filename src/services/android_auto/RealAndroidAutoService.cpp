@@ -4028,7 +4028,10 @@ bool RealAndroidAutoService::setupTCPServerTransport(quint16 port) {
 
       // Auto mode listens for wireless while it also scans USB. If a USB phone
       // got there first, turn the wireless phone away.
-      if (m_transport || m_aoapInProgress || m_state == ConnectionState::CONNECTED) {
+      // (m_transport alone is not proof: a session that ended through disconnect()
+      // leaves it set, which used to refuse every wireless reconnect.)
+      if (m_aoapInProgress || m_aoapDevice || m_state == ConnectionState::CONNECTING ||
+          m_state == ConnectionState::CONNECTED) {
         aaLogInfo("wireless", "Wireless AA connection refused: a USB session is active");
         boost::system::error_code closeEc;
         socket->close(closeEc);
@@ -4978,6 +4981,14 @@ bool RealAndroidAutoService::startSearching() {
   if (m_state != ConnectionState::DISCONNECTED) {
     Logger::instance().warning("Already searching or connected");
     return false;
+  }
+
+  // A session that ended through disconnect() (phone exited Android Auto, connection
+  // lost) leaves its transport, messenger and channels behind. Clear them before a
+  // new search so the next phone starts from a clean state.
+  if (m_transport) {
+    aaLogInfo("startSearching", "clearing transport and channels left by the previous session");
+    cleanupChannels();
   }
 
   // If wireless mode is configured, try TCP connection instead of USB search

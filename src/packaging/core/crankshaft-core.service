@@ -47,7 +47,8 @@ Environment="PULSE_SERVER=unix:/run/user/%U/pulse/native"
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
+# read-only, not true: true hides /run/user, where the PipeWire/Pulse socket lives.
+ProtectHome=read-only
 # /run/crankshaft: wireless AA hotspot settings for crankshaft-aa-hotspot.service
 RuntimeDirectory=crankshaft
 RuntimeDirectoryMode=0750

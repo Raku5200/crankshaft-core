@@ -77,6 +77,17 @@ bool HostapdWirelessNetworkManager::startHotspot(const HotspotConfig& config) {
     return false;
   }
 
+  // Restarting hostapd drops every station, including a phone that is about to
+  // reconnect. If the hotspot is already up with these settings, keep it.
+  const QString wantedConfig =
+      QStringLiteral("%1\n%2\n%3").arg(config.ssid, open ? QString() : config.password)
+          .arg(config.channel);
+  if (m_started && wantedConfig == m_appliedConfig && unitActive()) {
+    Logger::instance().info(
+        QString("[Hotspot] hostapd hotspot \"%1\" already running").arg(config.ssid));
+    return true;
+  }
+
   QDir().mkpath(QString::fromLatin1(kEnvDir));
   QFile env(QString::fromLatin1(kEnvFile));
   if (!env.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
@@ -114,6 +125,7 @@ bool HostapdWirelessNetworkManager::startHotspot(const HotspotConfig& config) {
   }
 
   m_started = true;
+  m_appliedConfig = wantedConfig;
   m_ssid = config.ssid;
   m_security = open ? SecurityMode::Open : SecurityMode::Wpa2Psk;
   Logger::instance().info(QString("[Hotspot] hostapd hotspot \"%1\" %2 (%3, %4)")
