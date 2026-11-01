@@ -8373,6 +8373,28 @@ void RealAndroidAutoService::onChannelError(const QString& channelName, const QS
     dumpControlTrace(QStringLiteral("channel_error_control"));
   }
 
+  // The wireless TCP link to the phone failed (phone left Wi-Fi, walked away,
+  // Wi-Fi turned off). Nothing on this connection can recover; drop the session
+  // and go back to waiting for the phone, without an error dialog.
+  if (crankshaft::aasdk_error_classification::isTcpTransferErrorText(error)) {
+    if (m_state != ConnectionState::CONNECTED && m_state != ConnectionState::CONNECTING) {
+      aaLogInfo("channelError", QString("channel=%1 state=%2 details=%3 -> late wireless "
+                                        "error after session ended, ignoring")
+                                    .arg(channelName)
+                                    .arg(connectionStateToString(m_state))
+                                    .arg(error));
+      return;
+    }
+    aaLogWarning("channelError",
+                 QString("channel=%1 state=%2 details=%3 -> wireless connection lost, "
+                         "reconnecting")
+                     .arg(channelName)
+                     .arg(connectionStateToString(m_state))
+                     .arg(error));
+    performImmediateTransportRecovery(QStringLiteral("tcp_connection_lost"));
+    return;
+  }
+
   // A failed TLS record (e.g. SSL_READ / SSL_ERROR_SSL on the video channel)
   // means the encrypted stream is out of sync for every channel; re-arming or a
   // grace period cannot fix it. Drop the session and reconnect without showing

@@ -165,6 +165,17 @@ inline auto isSslStreamErrorText(const QString& errorText) -> bool {
   return false;
 }
 
+/// Returns true when the error is a TCP_TRANSFER failure (AASDK code 33) from the
+/// wireless transport. The native code is the socket errno (connection reset,
+/// EOF, timeout...). The TCP link to the phone is gone, so the session cannot
+/// continue: drop it and wait for the phone to reconnect, without an error dialog.
+/// Seen in the field as "wifiProjection channel error: AASDK Error: 33, Native ..."
+/// after the phone left Wi-Fi.
+inline auto isTcpTransferErrorText(const QString& errorText) -> bool {
+  return errorText.contains(QStringLiteral("AASDK Error: 33,")) ||
+         errorText.endsWith(QStringLiteral("AASDK Error: 33"));
+}
+
 /// Returns true when the error represents an OPERATION_ABORTED (AASDK code 30).
 /// These are expected during normal messenger shutdown.
 inline auto isOperationAbortedErrorText(const QString& errorText) -> bool {

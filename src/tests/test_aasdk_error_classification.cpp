@@ -307,3 +307,23 @@ TEST_F(IsSslStreamErrorTextTest, OtherCodes_AreNotStreamErrors) {
   EXPECT_FALSE(isSslStreamErrorText(makeAasdkErrorString(30, 0)));
   EXPECT_FALSE(isSslStreamErrorText(makeAasdkErrorString(33, 1)));
 }
+
+// ---------------------------------------------------------------------------
+// isTcpTransferErrorText
+// ---------------------------------------------------------------------------
+class IsTcpTransferErrorTextTest : public ::testing::Test {};
+
+TEST_F(IsTcpTransferErrorTextTest, ConnectionReset_IsTcpTransfer) {
+  // "wifiProjection channel error: AASDK Error: 33, Native ..." after the phone left Wi-Fi
+  EXPECT_TRUE(isTcpTransferErrorText(makeAasdkErrorString(33, 104)));
+}
+
+TEST_F(IsTcpTransferErrorTextTest, EndOfFile_IsTcpTransfer) {
+  EXPECT_TRUE(isTcpTransferErrorText(makeAasdkErrorString(33, 2)));
+}
+
+TEST_F(IsTcpTransferErrorTextTest, UsbAndSslErrors_AreNotTcpTransfer) {
+  EXPECT_FALSE(isTcpTransferErrorText(makeAasdkErrorString(10, 5)));
+  EXPECT_FALSE(isTcpTransferErrorText(makeAasdkErrorString(26, 1)));
+  EXPECT_FALSE(isTcpTransferErrorText(makeAasdkErrorString(3, 33)));
+}
