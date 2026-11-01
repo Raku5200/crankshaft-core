@@ -15,85 +15,89 @@
 #  You should have received a copy of the GNU General Public License
 #  along with Crankshaft. If not, see <http://www.gnu.org/licenses/>.
 
-# Crankshaft udev rules for Android Auto device access
-# Grants USB access permissions and triggers core-owned AA discovery
+# Crankshaft udev rules for Android Auto device access.
+#
+# Permissions only. These rules used to RUN a bash + python3 script for every
+# event of every phone (add, bind, unbind, remove; twice for Google/AOA ids).
+# udev handles one device's events in order, so each ~3 s script run held up
+# the next event: libusb, and so crankshaft-core, saw the phone in Android
+# Auto mode ~18 s after the kernel did. crankshaft-core already watches USB
+# hotplug itself and does not need a trigger.
 
 # Skip storage devices and non-USB subsystems
 KERNEL=="sd*", GOTO="crankshaft_end"
 KERNEL=="sg*", GOTO="crankshaft_end"
 SUBSYSTEM!="usb", GOTO="crankshaft_end"
+ENV{DEVTYPE}!="usb_device", GOTO="crankshaft_end"
 
 # Android device vendors
-# Each rule grants permissions and triggers AA discovery in core
+# Each rule only grants USB access; core finds the phone itself (libusb hotplug)
 
 # Acer
-SUBSYSTEM=="usb", ATTR{idVendor}=="0502", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0502", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # Allwinner
-SUBSYSTEM=="usb", ATTR{idVendor}=="1f3a", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="1f3a", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # Amlogic
-SUBSYSTEM=="usb", ATTR{idVendor}=="1b8e", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="1b8e", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # ASUS
-SUBSYSTEM=="usb", ATTR{idVendor}=="0b05", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0b05", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # Google (Pixel, Nexus)
-SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # HTC
-SUBSYSTEM=="usb", ATTR{idVendor}=="0bb4", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0bb4", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # Huawei
-SUBSYSTEM=="usb", ATTR{idVendor}=="12d1", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="12d1", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # Lenovo
-SUBSYSTEM=="usb", ATTR{idVendor}=="17ef", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="17ef", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # LG
-SUBSYSTEM=="usb", ATTR{idVendor}=="1004", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="1004", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # Motorola
-SUBSYSTEM=="usb", ATTR{idVendor}=="22b8", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="22b8", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # MediaTek (MTK)
-SUBSYSTEM=="usb", ATTR{idVendor}=="0e8d", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0e8d", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # Nokia
-SUBSYSTEM=="usb", ATTR{idVendor}=="0421", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0421", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # Nvidia
-SUBSYSTEM=="usb", ATTR{idVendor}=="0955", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0955", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # OnePlus
-SUBSYSTEM=="usb", ATTR{idVendor}=="2a70", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="2a70", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # OPPO
-SUBSYSTEM=="usb", ATTR{idVendor}=="22d9", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="22d9", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # Qualcomm
-SUBSYSTEM=="usb", ATTR{idVendor}=="05c6", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="05c6", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # Samsung
-SUBSYSTEM=="usb", ATTR{idVendor}=="04e8", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="04e8", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # Sony
-SUBSYSTEM=="usb", ATTR{idVendor}=="054c", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="054c", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # Sony Ericsson
-SUBSYSTEM=="usb", ATTR{idVendor}=="0fce", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0fce", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # Xiaomi
-SUBSYSTEM=="usb", ATTR{idVendor}=="2717", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="2717", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # ZTE
-SUBSYSTEM=="usb", ATTR{idVendor}=="19d2", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="19d2", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 # Android Open Accessory (AOA) protocol - used by Android Auto
-SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", ATTR{idProduct}=="2d00", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
-SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", ATTR{idProduct}=="2d01", MODE="0666", GROUP="plugdev", TAG+="uaccess", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh add '$env{ID_MODEL}' '%E{DEVNAME}'"
-
-# Handle device removal (no-op by default, keeps future trigger flexibility)
-SUBSYSTEM=="usb", ACTION=="remove", RUN+="/usr/lib/crankshaft/aa_discovery_trigger.sh remove '$env{ID_MODEL}' '%E{DEVNAME}'"
+SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", ATTR{idProduct}=="2d00", MODE="0666", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", ATTR{idProduct}=="2d01", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
 LABEL="crankshaft_end"

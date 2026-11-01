@@ -329,7 +329,7 @@ install(PROGRAMS
 
 # Install udev rules
 install(FILES ${CMAKE_SOURCE_DIR}/packaging/core/udev/99-crankshaft.rules
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/udev/rules.d
+  DESTINATION lib/udev/rules.d
   COMPONENT core
 )
 
