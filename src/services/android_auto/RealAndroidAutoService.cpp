@@ -3574,8 +3574,9 @@ void RealAndroidAutoService::setConnectionMode(const QString& mode) {
   }
 
   const bool wasWireless = m_transportMode == TransportMode::Wireless || m_wirelessEnabled;
-  const bool newWirelessEnabled = newMode == TransportMode::Wireless ||
-                                  (newMode == TransportMode::Auto && m_wirelessEnabled);
+  // Auto mode scans USB and listens for wireless at the same time; it must not
+  // keep the wireless-only flag, or switching Wireless -> Auto leaves USB off.
+  const bool newWirelessEnabled = newMode == TransportMode::Wireless;
   if (newMode == m_transportMode && newWirelessEnabled == wasWireless) {
     return;
   }
@@ -3716,8 +3717,9 @@ void RealAndroidAutoService::configureTransport(const QMap<QString, QVariant>& s
     m_transportMode = TransportMode::Wireless;
     m_wirelessEnabled = true;
   } else {
+    // Auto: USB search plus the wireless listener (startAutoModeWirelessListener).
     m_transportMode = TransportMode::Auto;
-    m_wirelessEnabled = settings.value("wireless.enabled", false).toBool();
+    m_wirelessEnabled = false;
   }
 
   // Wireless settings are always loaded so the mode can be switched to

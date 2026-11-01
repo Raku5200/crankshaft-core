@@ -22,6 +22,7 @@
 #include <QDBusArgument>
 #include <QDBusConnection>
 #include <QDBusInterface>
+#include <QDBusMetaType>
 #include <QDBusPendingCall>
 #include <QDBusPendingReply>
 #include <QDBusReply>
@@ -30,6 +31,11 @@
 #include <QUuid>
 
 // NetworkManager DBus constants
+// NetworkManager connection settings are a{sa{sv}}: setting name -> properties.
+// A plain QVariantMap would be sent as a{sv}, which NetworkManager rejects.
+using NMConnectionSettings = QMap<QString, QVariantMap>;
+Q_DECLARE_METATYPE(NMConnectionSettings)
+
 static const char* NM_DBUS_SERVICE = "org.freedesktop.NetworkManager";
 static const char* NM_DBUS_PATH = "/org/freedesktop/NetworkManager";
 static const char* NM_DBUS_INTERFACE = "org.freedesktop.NetworkManager";
@@ -202,6 +208,7 @@ int WiFiHAL::WiFiHALPrivate::getSignalQuality(int signalStrength) {
 }
 
 WiFiHAL::WiFiHAL(QObject* parent) : QObject(parent), d(new WiFiHALPrivate()) {
+  qDBusRegisterMetaType<NMConnectionSettings>();
   if (!d->dbusConnection.isConnected()) {
     qCritical() << "Cannot connect to system DBus";
     return;
@@ -359,7 +366,7 @@ bool WiFiHAL::connectToNetwork(const QString& ssid, const QString& password,
   QVariantMap ipv6;
   ipv6["method"] = "auto";
 
-  QVariantMap connectionSettings;
+  NMConnectionSettings connectionSettings;
   connectionSettings["connection"] = connection;
   connectionSettings["802-11-wireless"] = wireless;
   connectionSettings["ipv4"] = ipv4;
@@ -373,7 +380,7 @@ bool WiFiHAL::connectToNetwork(const QString& ssid, const QString& password,
       case WiFiSecurity::WEP:
         wirelessSecurity["key-mgmt"] = "none";
         wirelessSecurity["wep-key0"] = password;
-        wirelessSecurity["wep-key-type"] = 1;  // ASCII/Hex
+        wirelessSecurity["wep-key-type"] = static_cast<quint32>(1);  // ASCII/Hex
         break;
       case WiFiSecurity::WPA_PSK:
       case WiFiSecurity::WPA2_PSK:
@@ -608,7 +615,7 @@ bool WiFiHAL::startHotspot(const HotspotConfig& config) {
   wireless["mode"] = "ap";
   if (config.channel > 0) {
     wireless["band"] = "bg";
-    wireless["channel"] = config.channel;
+    wireless["channel"] = static_cast<quint32>(config.channel);
   }
 
   QVariantMap ipv4;
@@ -617,7 +624,7 @@ bool WiFiHAL::startHotspot(const HotspotConfig& config) {
   QVariantMap ipv6;
   ipv6["method"] = "ignore";
 
-  QVariantMap connectionSettings;
+  NMConnectionSettings connectionSettings;
   connectionSettings["connection"] = connection;
   connectionSettings["802-11-wireless"] = wireless;
   connectionSettings["ipv4"] = ipv4;

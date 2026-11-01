@@ -408,6 +408,12 @@ auto WirelessAABootstrap::start(WifiInfoProvider provider, const Options& option
   m_hspSinceMs.clear();
   openPairingWindow(options.pairingWindowSeconds);
   logAdapterUuids();
+  // BlueZ may publish the record a moment later; check again.
+  QTimer::singleShot(3000, this, [this]() {
+    if (m_running) {
+      logAdapterUuids();
+    }
+  });
 
   m_reconnectTimer = new QTimer(this);
   m_reconnectTimer->setInterval(qMax(5, options.reconnectIntervalSeconds) * 1000);
@@ -739,6 +745,10 @@ void WirelessAABootstrap::logAdapterUuids() {
   logInfo(QStringLiteral("Adapter advertises %1 service(s); Android Auto service %2")
               .arg(list.size())
               .arg(advertised ? QStringLiteral("present") : QStringLiteral("MISSING")));
+  if (!advertised) {
+    // Without this record the phone never opens the Android Auto channel.
+    logWarn(QStringLiteral("Adapter services: %1").arg(list.join(QStringLiteral(", "))));
+  }
 }
 
 // --- RFCOMM handshake --------------------------------------------------------
