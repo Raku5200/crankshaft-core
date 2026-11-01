@@ -3746,7 +3746,7 @@ void RealAndroidAutoService::configureTransport(const QMap<QString, QVariant>& s
     m_wirelessHotspotChannel = wirelessSetting("wireless.hotspot.channel", 0).toInt();
     m_wirelessBluetoothEnabled = wirelessSetting("wireless.bluetooth.enabled", true).toBool();
     m_wirelessPairingWindowSeconds = qBound(
-        0, wirelessSetting("wireless.bluetooth.pairing_window_seconds", 120).toInt(), 3600);
+        0, wirelessSetting("wireless.bluetooth.pairing_window_seconds", 600).toInt(), 3600);
     m_wirelessBluetoothName = wirelessSetting("wireless.bluetooth.name", QString()).toString();
     m_wirelessListenInAutoMode = wirelessSetting("wireless.listen_in_auto_mode", true).toBool();
 
@@ -7831,7 +7831,10 @@ void RealAndroidAutoService::transitionToState(ConnectionState newState) {
       if (m_wirelessBootstrap) {
         m_wirelessBootstrap->setProjectionActive(true);
       }
-      if (m_aoapDevice && !m_tcpSocket && m_libusbContext) {
+      // USB session: an AOAP device and no accepted wireless connection. (In Auto
+      // mode m_tcpSocket exists as the listener's not-yet-accepted socket, so
+      // test whether it is open rather than whether it exists.)
+      if (m_aoapDevice && m_libusbContext && !(m_tcpSocket && m_tcpSocket->is_open())) {
         if (!m_usbPresenceTimer) {
           m_usbPresenceTimer = new QTimer(this);
           m_usbPresenceTimer->setInterval(1000);

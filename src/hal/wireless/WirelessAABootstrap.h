@@ -156,7 +156,7 @@ class WirelessAABootstrap : public QObject {
   struct Options {
     // Seconds the adapter stays discoverable and accepts new pairings after start().
     // 0 = never discoverable (only already-paired phones can connect).
-    int pairingWindowSeconds{120};
+    int pairingWindowSeconds{600};
     // How often to nudge paired phones to connect while no projection is active.
     int reconnectIntervalSeconds{20};
     // Bluetooth name shown on the phone; empty keeps the current adapter alias.

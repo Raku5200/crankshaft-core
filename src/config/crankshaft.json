@@ -24,7 +24,7 @@
         "bluetooth": {
           "enabled": true,
           "name": "Crankshaft",
-          "pairing_window_seconds": 120
+          "pairing_window_seconds": 600
         }
       },
       "logging": {

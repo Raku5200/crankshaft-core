@@ -565,10 +565,14 @@ QString WiFiHAL::getIPAddress() const {
     return QString();
   }
 
-  // Get address data
-  QVariant addressDataVar = ip4Config.property("AddressData");
-  if (addressDataVar.isValid()) {
-    QDBusArgument arg = addressDataVar.value<QDBusArgument>();
+  // Get address data (aa{sv}). Read it through org.freedesktop.DBus.Properties:
+  // QDBusInterface::property() can't demarshal aa{sv} without a registered type.
+  QDBusInterface ip4Props(NM_DBUS_SERVICE, ip4ConfigPath, "org.freedesktop.DBus.Properties",
+                          d->dbusConnection);
+  QDBusReply<QDBusVariant> addressReply =
+      ip4Props.call("Get", "org.freedesktop.NetworkManager.IP4Config", "AddressData");
+  if (addressReply.isValid()) {
+    QDBusArgument arg = addressReply.value().variant().value<QDBusArgument>();
     arg.beginArray();
     while (!arg.atEnd()) {
       QVariantMap addressMap;
@@ -639,6 +643,14 @@ bool WiFiHAL::startHotspot(const HotspotConfig& config) {
     QVariantMap wirelessSecurity;
     wirelessSecurity["key-mgmt"] = "wpa-psk";
     wirelessSecurity["psk"] = config.password;
+    // Plain WPA2-PSK/CCMP with protected management frames off. Left at the
+    // default, NetworkManager asks wpa_supplicant for "WPA-PSK WPA-PSK-SHA256"
+    // (PMF), which the Pi's brcmfmac chip can't do in AP mode: the AP never comes
+    // up and NM gives up with "Hotspot network creation took too long".
+    wirelessSecurity["proto"] = QStringList{QStringLiteral("rsn")};
+    wirelessSecurity["pairwise"] = QStringList{QStringLiteral("ccmp")};
+    wirelessSecurity["group"] = QStringList{QStringLiteral("ccmp")};
+    wirelessSecurity["pmf"] = static_cast<qint32>(1);  // NM_SETTING_WIRELESS_SECURITY_PMF_DISABLE
     connectionSettings["802-11-wireless-security"] = wirelessSecurity;
   }
 
