@@ -1,0 +1,10 @@
+# Crankshaft: car IBus interface (Resler I/K-Bus interface and other USB-serial
+# IBus adapters). crankshaft-core opens /dev/ibus first, then a Resler/FTDI
+# device in /dev/serial/by-id, then /dev/ttyUSB0 (core.ibus.device overrides).
+
+# Resler interfaces use an FTDI USB-serial chip.
+SUBSYSTEM=="tty", KERNEL=="ttyUSB*", ATTRS{idVendor}=="0403", SYMLINK+="ibus", GROUP="dialout", MODE="0660"
+
+# FTDI holds received bytes for up to 16 ms by default. IBus collision
+# avoidance needs to see the bus quickly, so use 1 ms.
+ACTION=="add", SUBSYSTEM=="usb-serial", DRIVER=="ftdi_sio", ATTR{latency_timer}="1"

@@ -8,6 +8,7 @@ add_executable(crankshaft-core-tests
     test_websocket_client_contract.cpp
     test_wireless_aa_bootstrap.cpp
     test_ike_text.cpp
+    test_ibus_protocol.cpp
 )
 
 target_include_directories(crankshaft-core-tests PRIVATE

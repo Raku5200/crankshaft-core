@@ -95,6 +95,16 @@ aap_protobuf::service::inputsource::message::InputReport createKeyInputReport(
   return inputReport;
 }
 
+aap_protobuf::service::inputsource::message::InputReport createRelativeInputReport(
+    int keyCode, int delta, uint64_t timestamp) {
+  aap_protobuf::service::inputsource::message::InputReport inputReport;
+  inputReport.set_timestamp(timestamp == 0 ? getCurrentTimestampMicros() : timestamp);
+  auto* rel = inputReport.mutable_relative_event()->add_data();
+  rel->set_keycode(static_cast<uint32_t>(keyCode));
+  rel->set_delta(delta);
+  return inputReport;
+}
+
 aap_protobuf::service::control::message::AudioFocusNotification createAudioFocusNotification(
     AudioFocusState focusState) {
   // Create AudioFocusNotification message

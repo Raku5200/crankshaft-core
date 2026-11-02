@@ -163,6 +163,7 @@ class RealAndroidAutoService : public AndroidAutoService {
       const std::shared_ptr<IWirelessNetworkManager>& manager) override;
   void setConnectionMode(const QString& mode) override;
   void setAudioOutputOnPhone(bool onPhone) override;
+  bool sendRotaryInput(int steps) override;
   void setEventBus(EventBus* eventBus) {
     m_eventBus = eventBus;
   }

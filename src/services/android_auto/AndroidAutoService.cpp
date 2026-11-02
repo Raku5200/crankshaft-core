@@ -340,6 +340,11 @@ void AndroidAutoService::setConnectionMode(const QString& mode) {
   Q_UNUSED(mode)
 }
 
+bool AndroidAutoService::sendRotaryInput(int steps) {
+  Q_UNUSED(steps);
+  return false;
+}
+
 void AndroidAutoService::setAudioOutputOnPhone(bool onPhone) {
   Q_UNUSED(onPhone)
 }

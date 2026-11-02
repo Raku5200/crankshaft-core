@@ -129,7 +129,18 @@
       "discovery_timeout_seconds": 60
     },
     "ibus": {
+      "enabled": true,
+      "device": "auto",
+      "source_address": 59,
+      "poll_interval_s": 10,
+      "idle_gap_ms": 10,
+      "max_retries": 3,
+      "bus_awake_window_s": 30,
+      "input": {
+        "to_android_auto": true
+      },
       "ike": {
+        "send_text": true,
         "alert_distance_m": 200,
         "navigation_display_s": 30,
         "media_display_s": 30,

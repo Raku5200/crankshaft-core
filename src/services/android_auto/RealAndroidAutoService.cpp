@@ -1116,6 +1116,14 @@ static void appendInputSourceFeature(
       aap_protobuf::service::media::sink::message::KeyCode::KEYCODE_CALL);
   inputService->add_keycodes_supported(
       aap_protobuf::service::media::sink::message::KeyCode::KEYCODE_ENDCALL);
+  // Car buttons (BMBT / steering wheel via IBus): media, voice and the dial.
+  for (const auto code : {aap_protobuf::service::media::sink::message::KeyCode::KEYCODE_MEDIA_NEXT,
+                          aap_protobuf::service::media::sink::message::KeyCode::KEYCODE_MEDIA_PREVIOUS,
+                          aap_protobuf::service::media::sink::message::KeyCode::KEYCODE_MEDIA_PLAY_PAUSE,
+                          aap_protobuf::service::media::sink::message::KeyCode::KEYCODE_SEARCH,
+                          aap_protobuf::service::media::sink::message::KeyCode::KEYCODE_ROTARY_CONTROLLER}) {
+    inputService->add_keycodes_supported(code);
+  }
 
     // Advertise a broad keyboard set so AA can accept physical keyboard typing.
     const std::initializer_list<int> keyboardCodes = {
@@ -5544,6 +5552,28 @@ bool RealAndroidAutoService::sendTouchInput(int x, int y, int action) {
     return true;
   } catch (const std::exception& e) {
     Logger::instance().error(QString("Failed to send touch input: %1").arg(e.what()));
+    return false;
+  }
+}
+
+bool RealAndroidAutoService::sendRotaryInput(int steps) {
+  if (!isConnected() || !m_inputChannel || steps == 0) {
+    return false;
+  }
+  try {
+    using namespace crankshaft::protocol;
+    // KEYCODE_ROTARY_CONTROLLER, advertised in the input service.
+    auto data = createRelativeInputReport(65536, steps);
+    auto promise = aasdk::channel::SendPromise::defer(*m_strand);
+    promise->then([]() {},
+                  [](const aasdk::error::Error& error) {
+                    Logger::instance().warning(
+                        QString("Failed to send rotary input: %1").arg(error.what()));
+                  });
+    m_inputChannel->sendInputReport(data, std::move(promise));
+    return true;
+  } catch (const std::exception& e) {
+    Logger::instance().error(QString("Failed to send rotary input: %1").arg(e.what()));
     return false;
   }
 }

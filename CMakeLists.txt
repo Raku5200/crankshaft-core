@@ -148,6 +148,8 @@ set(CORE_SOURCES
   services/android_auto/ProjectionInfo.cpp
   services/android_auto/NavigationClusterChannel.cpp
   services/ibus/IkeText.cpp
+  services/ibus/IbusProtocol.cpp
+  services/ibus/IbusService.cpp
   services/android_auto/WiFiManagerWirelessNetworkManager.cpp
   services/android_auto/HostapdWirelessNetworkManager.cpp
   services/android_auto/ProtocolHelpers.cpp
@@ -330,6 +332,7 @@ install(PROGRAMS
 
 # Install udev rules
 install(FILES ${CMAKE_SOURCE_DIR}/packaging/core/udev/99-crankshaft.rules
+  ${CMAKE_SOURCE_DIR}/packaging/core/udev/60-crankshaft-ibus.rules
   DESTINATION lib/udev/rules.d
   COMPONENT core
 )

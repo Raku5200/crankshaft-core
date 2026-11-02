@@ -49,7 +49,8 @@ case "$1" in
         usermod -a -G aasdk crankshaft 2>/dev/null || true
         # Wireless Android Auto: BlueZ profiles/agent (bluetooth) and
         # NetworkManager hotspot (netdev; polkit rule shipped with the package).
-        for grp in bluetooth netdev; do
+        # dialout: the car IBus interface (/dev/ttyUSB*, /dev/ibus).
+        for grp in bluetooth netdev dialout; do
             if getent group "$grp" > /dev/null 2>&1; then
                 usermod -a -G "$grp" crankshaft 2>/dev/null || true
             fi

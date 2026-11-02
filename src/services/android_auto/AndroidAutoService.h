@@ -120,6 +120,13 @@ class AndroidAutoService : public QObject {
   virtual void setAudioOutputOnPhone(bool onPhone);
 
   /**
+   * @brief Send rotary controller steps (e.g. the car's BMBT dial)
+   * @param steps Positive clockwise, negative anticlockwise
+   * @return true if sent. Default implementation returns false.
+   */
+  virtual bool sendRotaryInput(int steps);
+
+  /**
    * @brief Initialise the Android Auto service
    * @return true if initialisation successful
    */

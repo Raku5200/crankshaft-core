@@ -83,6 +83,14 @@ aap_protobuf::service::inputsource::message::InputReport createKeyInputReport(
     int metaState = 0);
 
 /**
+ * @brief Relative input (e.g. rotary controller steps) report
+ * @param keyCode Key code of the relative control (65536 = rotary controller)
+ * @param delta Steps, positive clockwise
+ */
+aap_protobuf::service::inputsource::message::InputReport createRelativeInputReport(
+    int keyCode, int delta, uint64_t timestamp = 0);
+
+/**
  * @brief Create an audio focus notification message
  * @param focusState Focus state to set (GAIN or LOSS)
  * @return AudioFocusNotification protobuf message

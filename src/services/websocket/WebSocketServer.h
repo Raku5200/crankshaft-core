@@ -24,11 +24,14 @@
 #include <QJsonObject>
 #include <QList>
 #include <QObject>
+#include <QPointer>
 #include <QSslConfiguration>
 #include <QSet>
 #include <QTimer>
 #include <QWebSocket>
 #include <QWebSocketServer>
+
+#include "../ibus/IbusService.h"
 
 // Forward declarations
 class BluetoothManager;
@@ -265,6 +268,8 @@ class WebSocketServer : public QObject {
    * @note Must be called before initializeServiceConnections()
    */
   void setServiceManager(ServiceManager* serviceManager);
+  /// Car IBus: ibus/status, ibus/obc and ibus/input topics; BMBT/MFL input to Android Auto.
+  void setIbusService(crankshaft::ibus::IbusService* ibusService);
 
   /**
    * @brief Connect to all service signals for event forwarding
@@ -394,6 +399,7 @@ class WebSocketServer : public QObject {
   QVariantMap m_lastNowPlaying;
   QVariantMap m_lastNavigation;
   QVariantMap m_lastClusterText;
+  QPointer<crankshaft::ibus::IbusService> m_ibusService;
   qint64 m_lastRenegotiationRequestMs{0};
   int m_renegotiationCooldownMs{8000};
   int m_connectedRenegotiationGraceMs{20000};

@@ -45,6 +45,7 @@
 #include "services/profile/ProfileManager.h"
 #include "services/service_manager/ServiceManager.h"
 #include "services/websocket/WebSocketServer.h"
+#include "services/ibus/IbusService.h"
 
 namespace {
 
@@ -327,6 +328,11 @@ int runCoreApplication(int argc, char* argv[], const CoreBuildInfo& buildInfo) {
   }
   webSocketService.setServiceManager(&serviceManager);
   webSocketService.initializeServiceConnections();
+
+  // Car IBus (Resler or other USB interface); idle until the interface appears.
+  crankshaft::ibus::IbusService ibusService;
+  webSocketService.setIbusService(&ibusService);
+  ibusService.start();
   Logger::instance().info(
       QString("[STARTUP] %1ms elapsed: WebSocket service started").arg(startupTimer.elapsed()));
 

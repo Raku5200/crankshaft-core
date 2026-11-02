@@ -19,6 +19,8 @@
 
 #include "WebSocketServer.h"
 
+#include "../ibus/IbusService.h"
+
 #include <QBuffer>
 #include <QDateTime>
 #include <QFile>
@@ -189,6 +191,35 @@ bool WebSocketServer::isListening() const {
 void WebSocketServer::setServiceManager(ServiceManager* serviceManager) {
   m_serviceManager = serviceManager;
   Logger::instance().info("[WebSocketServer] ServiceManager registered");
+}
+
+void WebSocketServer::setIbusService(crankshaft::ibus::IbusService* ibusService) {
+  using crankshaft::ibus::IbusService;
+  m_ibusService = ibusService;
+  if (!ibusService) {
+    return;
+  }
+  connect(ibusService, &IbusService::statusChanged, this,
+          [this](const QVariantMap& status) { broadcastEvent(QStringLiteral("ibus/status"), status); });
+  connect(ibusService, &IbusService::vehicleStateChanged, this,
+          [this](const QVariantMap& state) { broadcastEvent(QStringLiteral("ibus/obc"), state); });
+  connect(ibusService, &IbusService::inputReceived, this,
+          [this](const QVariantMap& event) { broadcastEvent(QStringLiteral("ibus/input"), event); });
+  connect(ibusService, &IbusService::androidAutoKey, this, [this](int keyCode, bool down) {
+    AndroidAutoService* aaService =
+        m_serviceManager ? m_serviceManager->getAndroidAutoService() : nullptr;
+    if (aaService && aaService->isConnected()) {
+      aaService->sendKeyInput(keyCode, down ? 0 : 1);
+    }
+  });
+  connect(ibusService, &IbusService::androidAutoRotary, this, [this](int steps) {
+    AndroidAutoService* aaService =
+        m_serviceManager ? m_serviceManager->getAndroidAutoService() : nullptr;
+    if (aaService && aaService->isConnected()) {
+      aaService->sendRotaryInput(steps);
+    }
+  });
+  Logger::instance().info("[WebSocketServer] IBus service registered");
 }
 
 void WebSocketServer::initializeServiceConnections() {
@@ -448,6 +479,11 @@ void WebSocketServer::handleSubscribe(QWebSocket* client, const QString& topic) 
       Logger::instance().debug(QString("[WebSocketServer]   - %1").arg(sub));
     }
 
+    if (topic.startsWith(QStringLiteral("ibus")) && m_ibusService) {
+      broadcastEvent(QStringLiteral("ibus/status"), m_ibusService->status());
+      broadcastEvent(QStringLiteral("ibus/obc"), m_ibusService->vehicleState());
+    }
+
     // Send current Android Auto state when subscribing to android-auto topics
     if (topic.startsWith("android-auto") && m_serviceManager) {
       AndroidAutoService* aaService = m_serviceManager->getAndroidAutoService();
@@ -490,6 +526,15 @@ void WebSocketServer::handleSubscribe(QWebSocket* client, const QString& topic) 
 }
 
 void WebSocketServer::handlePublish(const QString& topic, const QVariantMap& payload) {
+  if (topic.startsWith(QStringLiteral("ibus/")) && m_ibusService) {
+    if (topic == QStringLiteral("ibus/obc-control")) {
+      m_ibusService->sendObcControl(payload.value(QStringLiteral("property")).toInt(),
+                                    payload.value(QStringLiteral("control")).toInt());
+    } else if (topic == QStringLiteral("ibus/input-target")) {
+      m_ibusService->setInputTarget(payload.value(QStringLiteral("target")).toString());
+    }
+    return;
+  }
   if (topic.startsWith(QStringLiteral("android-auto/")) && m_serviceManager) {
     AndroidAutoService* aaService = m_serviceManager->getAndroidAutoService();
     if (aaService) {
@@ -1340,6 +1385,9 @@ void WebSocketServer::setupAndroidAutoConnections() {
           [this](const QVariantMap& clusterText) {
             m_lastClusterText = clusterText;
             broadcastEvent(QStringLiteral("android-auto/status/cluster-text"), clusterText);
+            if (m_ibusService) {
+              m_ibusService->setClusterText(clusterText);
+            }
           });
     connect(aaService, &AndroidAutoService::webRtcSignalingMessage, this,
       [this](const QString& topic, const QVariantMap& payload) {
