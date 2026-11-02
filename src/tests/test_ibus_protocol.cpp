@@ -237,6 +237,9 @@ struct FakeBus {
   IbusFrameParser fromService;
   QList<QByteArray> sent;  // frames the service transmitted
   int dropEchoes = 0;      // swallow the next N echoes (collision)
+  bool hasPdc = false;     // a PDC module answers 0x1B requests
+  int pdcRearCenter = 40;  // cm
+  bool pdcOn = true;
 
   FakeBus() {
     int slave = -1;
@@ -274,6 +277,15 @@ struct FakeBus {
             QByteArray data = QByteArray::fromHex("240600");
             data.append(" 512");
             send(ibusFrame(0x80, 0xFF, data));
+          }
+          if (hasPdc && frame.destination == 0x60 && frame.command() == 0x1B) {
+            // A0 status rl rr rcl rcr fl fr fcl fcr flags
+            QByteArray data = QByteArray::fromHex("A000");
+            for (int v : {90, 255, pdcRearCenter, pdcRearCenter + 5, 255, 255, 120, 255}) {
+              data.append(static_cast<char>(v));
+            }
+            data.append(static_cast<char>(pdcOn ? 0x01 : 0x00));
+            send(ibusFrame(0x60, 0x3F, data));
           }
         }
       }
@@ -431,6 +443,97 @@ TEST(IbusServiceTest, BcButtonStopsScrollingUntilNewSongOrTurn) {
   service.setClusterText({{"line", "Song three"}});
   bus.run(300);
   EXPECT_TRUE(bus.sent.isEmpty());
+  ConfigService::instance().set("core.ibus.device", "auto");
+}
+
+TEST(IbusProtocolTest, GearAndParkDistances) {
+  VehicleState state;
+  IbusFrame frame;
+  IbusFrameParser parser;
+  parser.feed(QByteArray::fromHex("800ABF130111000000004670"));  // engine running, reverse
+  auto frames = parser.takeFrames();
+  ASSERT_EQ(frames.size(), 1);
+  EXPECT_TRUE(applyClusterFrame(frames[0], state));
+  EXPECT_TRUE(state.reverse());
+  EXPECT_TRUE(state.handbrake);
+
+  QByteArray data = QByteArray::fromHex("A000");
+  for (int v : {30, 255, 25, 28, 255, 200, 120, 100}) data.append(static_cast<char>(v));
+  data.append('\x01');
+  parser.feed(ibusFrame(0x60, 0x3F, data));
+  frames = parser.takeFrames();
+  ASSERT_EQ(frames.size(), 1);
+  ParkDistances pdc;
+  ASSERT_TRUE(decodePdcDistances(frames[0], pdc));
+  EXPECT_TRUE(pdc.active);
+  EXPECT_EQ(pdc.rearLeft, 30);
+  EXPECT_EQ(pdc.rearRight, 255);
+  EXPECT_EQ(pdc.rearCenterLeft, 25);
+  EXPECT_EQ(pdc.rearCenterRight, 28);
+  EXPECT_EQ(pdc.frontRight, 200);
+  EXPECT_EQ(pdc.frontCenterLeft, 120);
+  EXPECT_EQ(pdc.frontCenterRight, 100);
+  EXPECT_EQ(pdcSensorRequestFrame(), QByteArray::fromHex("3F03601B47"));
+}
+
+TEST(IbusServiceTest, ReverseShowsParkingSensors) {
+  ensureApp();
+  FakeBus bus;
+  bus.hasPdc = true;
+  ASSERT_GE(bus.master, 0);
+  ConfigService::instance().set("core.ibus.device", bus.slavePath);
+  IbusService service;
+  QList<QVariantMap> updates;
+  QObject::connect(&service, &IbusService::parkingChanged,
+                   [&](const QVariantMap& p) { updates.append(p); });
+  service.start();
+  bus.send(QByteArray::fromHex("8004BF110329"));
+  bus.run(200);
+  EXPECT_TRUE(bus.sent.isEmpty());  // nothing asked outside reverse
+
+  bus.send(QByteArray::fromHex("800ABF130111000000004670"));  // reverse
+  bus.run(1700);
+  EXPECT_GE(bus.sent.count(pdcSensorRequestFrame()), 2);
+  ASSERT_FALSE(updates.isEmpty());
+  EXPECT_TRUE(service.parkingState().value("visible").toBool());
+  EXPECT_EQ(service.parkingState().value("rearCenterLeft").toInt(), 40);
+
+  bus.pdcRearCenter = 20;  // getting closer
+  bus.run(900);
+  EXPECT_EQ(service.parkingState().value("rearCenterLeft").toInt(), 20);
+
+  // Out of reverse and the PDC switches off: screen goes, polling stops.
+  bus.pdcOn = false;
+  bus.send(ibusFrame(0x80, 0xBF, QByteArray::fromHex("1300810000000046")));  // drive
+  bus.run(900);
+  EXPECT_FALSE(service.parkingState().value("visible").toBool());
+  bus.run(4000);  // PDC "on" window runs out
+  bus.sent.clear();
+  bus.run(2000);
+  EXPECT_EQ(bus.sent.count(pdcSensorRequestFrame()), 0);
+
+  // Switched off in Settings: reverse asks nothing.
+  service.setSettings(false, true, true, true, false);
+  bus.sent.clear();
+  bus.send(QByteArray::fromHex("800ABF130111000000004670"));
+  bus.run(1000);
+  EXPECT_EQ(bus.sent.count(pdcSensorRequestFrame()), 0);
+  EXPECT_FALSE(service.parkingState().value("visible").toBool());
+  ConfigService::instance().set("core.ibus.device", "auto");
+}
+
+TEST(IbusServiceTest, ReverseWithoutPdcModuleGivesUp) {
+  ensureApp();
+  FakeBus bus;  // no PDC module
+  ASSERT_GE(bus.master, 0);
+  ConfigService::instance().set("core.ibus.device", bus.slavePath);
+  IbusService service;
+  service.start();
+  bus.send(QByteArray::fromHex("8004BF110329"));
+  bus.send(QByteArray::fromHex("800ABF130111000000004670"));
+  bus.run(6000);
+  EXPECT_EQ(bus.sent.count(pdcSensorRequestFrame()), 4);
+  EXPECT_FALSE(service.parkingState().value("visible").toBool());
   ConfigService::instance().set("core.ibus.device", "auto");
 }
 

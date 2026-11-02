@@ -63,6 +63,8 @@ class IbusService : public QObject {
   [[nodiscard]] auto status() const -> QVariantMap;
   [[nodiscard]] auto vehicleState() const -> QVariantMap { return m_state.toVariantMap(); }
   [[nodiscard]] auto busAwake() const -> bool;
+  /// {visible, reverse, active, frontLeft..rearRight (cm, 255 none, -1 unknown)}
+  [[nodiscard]] auto parkingState() const -> QVariantMap;
 
   /// Android Auto key code for an input event, or -1. Exposed for tests.
   [[nodiscard]] auto keyCodeFor(const InputEvent& event) const -> int;
@@ -77,7 +79,8 @@ class IbusService : public QObject {
   /// UI settings: poll the cluster for OBC values (off = only listen, e.g. when
   /// the factory nav/monitor already asks), and which car controls to use.
   /// clusterText: show the Android Auto line (song / turn) on the cluster.
-  void setSettings(bool pollObc, bool bmbtInput, bool mflInput, bool clusterText = true);
+  void setSettings(bool pollObc, bool bmbtInput, bool mflInput, bool clusterText = true,
+                   bool parkingSensors = true);
   /// Show the Android Auto line again now, after the BC button paused it.
   void resumeClusterText();
 
@@ -88,6 +91,8 @@ class IbusService : public QObject {
   void inputReceived(const QVariantMap& event);
   /// Android Auto key down/up to inject (only while input goes to Android Auto).
   void androidAutoKey(int keyCode, bool down);
+  /// Parking sensors changed (see parkingState()).
+  void parkingChanged(const QVariantMap& parking);
   /// Android Auto rotary controller steps (+ clockwise).
   void androidAutoRotary(int steps);
 
@@ -112,6 +117,9 @@ class IbusService : public QObject {
   void publishStatus();
   void pauseClusterText(const QString& why);
   void logUnknownFrame(const IbusFrame& frame);
+  void startParking(const QString& why);
+  void onParkingTick();
+  void updateParkingVisible();
 
   // config
   bool m_enabled = true;
@@ -122,6 +130,8 @@ class IbusService : public QObject {
   bool m_bmbtInput = true;
   bool m_mflInput = true;
   bool m_clusterText = true;
+  bool m_parkingSensors = true;
+  int m_pdcIntervalMs = 750;
   int m_idleGapMs = 10;
   int m_maxRetries = 3;
   int m_busAwakeWindowMs = 30000;
@@ -138,6 +148,7 @@ class IbusService : public QObject {
   QTimer* m_pollTimer = nullptr;
   QTimer* m_statusTimer = nullptr;
   QTimer* m_staleTimer = nullptr;
+  QTimer* m_pdcTimer = nullptr;
 
   IbusFrameParser m_parser;
   VehicleState m_state;
@@ -159,6 +170,15 @@ class IbusService : public QObject {
   QString m_clusterContentKey;        // content of the latest AA line
   QString m_pausedClusterContentKey;  // content showing when BC was pressed
   QSet<quint32> m_loggedFrameKinds;
+
+  // Parking sensors: polled only while reversing or while PDC is switched on.
+  ParkDistances m_parking;
+  bool m_parkingHeard = false;       // a 0xA0 answer arrived since this started
+  bool m_parkingVisible = false;
+  QElapsedTimer m_lastPdcActivity;   // activation or "active" answer
+  QElapsedTimer m_lastPdcAnswer;     // any 0xA0 answer (ours or another unit's)
+  int m_pdcUnanswered = 0;
+  bool m_pdcGaveUp = false;          // no PDC module answered this reverse
 
   quint64 m_framesRx = 0;
   quint64 m_framesTx = 0;

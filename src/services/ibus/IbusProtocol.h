@@ -119,6 +119,8 @@ enum ObcControl : quint8 {
   ObcSetCurrentSpeed = 0x20,
 };
 
+constexpr int kGearReverse = 0x1;
+
 /// Everything the cluster tells us. Empty strings / -1 mean "not heard yet".
 struct VehicleState {
   int ignition = -1;  // 0 KL-30, 1 KL-R, 3 KL-15, 7 KL-50
@@ -126,6 +128,11 @@ struct VehicleState {
   int rpm = -1;
   int ambientC = -999;
   int coolantC = -999;
+  /// IKE 0x13 byte 2 high nibble (automatic/SMG only; manuals send 0).
+  /// 0x1 reverse, 0xB park, 0x7 neutral, 0x8 drive; -1 not heard yet.
+  int gear = -1;
+  bool handbrake = false;
+  [[nodiscard]] auto reverse() const -> bool { return gear == kGearReverse; }
 
   QString time;
   QString date;
@@ -161,6 +168,28 @@ auto consumptionUnitText(int unit) -> QString;
 auto obcControlFrame(quint8 property, quint8 control, quint8 source = kAddrGt) -> QByteArray;
 /// "3B 03 80 14 XX": ask the cluster for 0x15 language and units.
 auto unitsRequestFrame(quint8 source = kAddrGt) -> QByteArray;
+
+// --- Park Distance Control (PDC module 0x60)
+constexpr quint8 kAddrDiagnostics = 0x3F;
+
+/// Distances in cm from the PDC module; 255 = nothing in range, -1 = unknown.
+struct ParkDistances {
+  bool active = false;  // the PDC module says it is switched on
+  int frontLeft = -1, frontCenterLeft = -1, frontCenterRight = -1, frontRight = -1;
+  int rearLeft = -1, rearCenterLeft = -1, rearCenterRight = -1, rearRight = -1;
+
+  [[nodiscard]] auto toVariantMap() const -> QVariantMap;
+  auto operator==(const ParkDistances& other) const -> bool = default;
+};
+
+/// "3F 03 60 1B XX": ask the PDC module for its sensor distances (as the
+/// diagnostics tool / BlueBus do). Answered with 0xA0 (see decodePdcDistances).
+auto pdcSensorRequestFrame() -> QByteArray;
+/// PDC 0xA0 sensor response -> distances. False for any other frame.
+auto decodePdcDistances(const IbusFrame& frame, ParkDistances& out) -> bool;
+/// PDC module announcing it switched on (0x07 status, or its 0x5A lamp
+/// request to the LCM, depending on the module version).
+auto isPdcActivation(const IbusFrame& frame) -> bool;
 
 /// A button or dial on the BMBT (on-board monitor) or MFL (steering wheel).
 struct InputEvent {

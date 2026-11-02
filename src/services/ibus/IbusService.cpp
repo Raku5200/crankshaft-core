@@ -74,6 +74,8 @@ IbusService::IbusService(QObject* parent) : QObject(parent) {
   m_sourceAddress =
       static_cast<quint8>(boundedInt("core.ibus.source_address", kAddrGt, 0x00, 0xFF));
   m_pollIntervalMs = boundedInt("core.ibus.poll_interval_s", 10, 1, 3600) * 1000;
+  m_pdcIntervalMs = boundedInt("core.ibus.pdc.interval_ms", 750, 300, 5000);
+  m_parkingSensors = config.get(QStringLiteral("core.ibus.pdc.enabled"), true).toBool();
   // Off by default: a factory nav computer / monitor already asks the cluster,
   // and its answers are read too. The UI setting overrides this.
   m_pollObc = config.get(QStringLiteral("core.ibus.poll_obc"), false).toBool();
@@ -133,6 +135,9 @@ IbusService::IbusService(QObject* parent) : QObject(parent) {
   m_pollTimer = new QTimer(this);
   connect(m_pollTimer, &QTimer::timeout, this, &IbusService::poll);
 
+  m_pdcTimer = new QTimer(this);
+  connect(m_pdcTimer, &QTimer::timeout, this, &IbusService::onParkingTick);
+
   // Bus awake/asleep changes without any traffic, so re-check it now and then.
   m_statusTimer = new QTimer(this);
   m_statusTimer->setInterval(2000);
@@ -145,6 +150,8 @@ IbusService::IbusService(QObject* parent) : QObject(parent) {
         m_unitsRequested = false;
         m_lastIkeLine.clear();
         m_alertShown = false;
+        m_pdcTimer->stop();
+        updateParkingVisible();
       }
       publishStatus();
     }
@@ -200,6 +207,7 @@ auto IbusService::status() const -> QVariantMap {
   map[QStringLiteral("mflInput")] = m_mflInput;
   map[QStringLiteral("clusterText")] = m_clusterText;
   map[QStringLiteral("clusterTextPaused")] = m_clusterTextPaused;
+  map[QStringLiteral("parkingSensors")] = m_parkingSensors;
   map[QStringLiteral("error")] = m_lastError;
   return map;
 }
@@ -322,6 +330,8 @@ void IbusService::closeSerial(const QString& why) {
   m_unitsRequested = false;
   m_lastIkeLine.clear();
   m_alertShown = false;
+  m_pdcTimer->stop();
+  updateParkingVisible();
   publishStatus();
 }
 
@@ -377,12 +387,45 @@ void IbusService::handleFrame(const IbusFrame& frame) {
   }
 
   const int ignitionBefore = m_state.ignition;
+  const bool reverseBefore = m_state.reverse();
   if (applyClusterFrame(frame, m_state)) {
     emit vehicleStateChanged(m_state.toVariantMap());
+    if (m_state.reverse() != reverseBefore) {
+      log(m_state.reverse() ? QStringLiteral("Reverse gear") : QStringLiteral("Out of reverse"));
+      if (m_state.reverse()) {
+        startParking(QStringLiteral("reverse gear"));
+      } else {
+        m_pdcGaveUp = false;
+        updateParkingVisible();
+      }
+    }
     if (ignitionBefore > 0 && m_state.ignition == 0 && m_clusterTextPaused) {
       m_clusterTextPaused = false;
       log(QStringLiteral("Ignition off: cluster text resumes next drive"));
       publishStatus();
+    }
+    return;
+  }
+  if (isPdcActivation(frame)) {
+    m_lastPdcActivity.restart();
+    startParking(QStringLiteral("PDC switched on"));
+    return;
+  }
+  if (ParkDistances distances; decodePdcDistances(frame, distances)) {
+    m_lastPdcAnswer.restart();
+    m_pdcUnanswered = 0;
+    if (distances.active) {
+      m_lastPdcActivity.restart();
+    }
+    const bool changed = !m_parkingHeard || !(distances == m_parking);
+    m_parking = distances;
+    m_parkingHeard = true;
+    if (distances.active && !m_pdcTimer->isActive()) {
+      startParking(QStringLiteral("PDC answer"));  // another unit is polling
+    }
+    updateParkingVisible();
+    if (changed && m_parkingVisible) {
+      emit parkingChanged(parkingState());
     }
     return;
   }
@@ -399,6 +442,72 @@ void IbusService::handleFrame(const IbusFrame& frame) {
     return;
   }
   logUnknownFrame(frame);
+}
+
+auto IbusService::parkingState() const -> QVariantMap {
+  QVariantMap map = m_parking.toVariantMap();
+  map[QStringLiteral("visible")] = m_parkingVisible;
+  map[QStringLiteral("reverse")] = m_state.reverse();
+  map[QStringLiteral("heard")] = m_parkingHeard;
+  return map;
+}
+
+void IbusService::startParking(const QString& why) {
+  if (!m_parkingSensors || m_fd < 0 || m_pdcGaveUp) {
+    return;
+  }
+  if (!m_pdcTimer->isActive()) {
+    log(QStringLiteral("Parking sensors: %1, asking PDC every %2 ms").arg(why).arg(m_pdcIntervalMs));
+    m_pdcUnanswered = 0;
+    m_pdcTimer->start(m_pdcIntervalMs);
+    onParkingTick();
+  }
+}
+
+void IbusService::onParkingTick() {
+  constexpr int kPdcQuietMs = 3750;  // no PDC activity this long: it switched off
+  const bool pdcRecent = m_lastPdcActivity.isValid() && m_lastPdcActivity.elapsed() < kPdcQuietMs;
+  if (!m_parkingSensors || m_fd < 0 || !busAwake() || (!m_state.reverse() && !pdcRecent)) {
+    m_pdcTimer->stop();
+    log(QStringLiteral("Parking sensors: stopped"));
+    updateParkingVisible();
+    return;
+  }
+  // The factory nav/monitor may already be asking: then just listen.
+  if (m_lastPdcAnswer.isValid() && m_lastPdcAnswer.elapsed() < m_pdcIntervalMs - 150) {
+    return;
+  }
+  if (m_pdcUnanswered >= 4 && !pdcRecent) {
+    // Reverse without any PDC module answering: car without PDC.
+    log(QStringLiteral("Parking sensors: no answer from a PDC module, not asking again until next reverse"));
+    m_pdcGaveUp = true;
+    m_pdcTimer->stop();
+    updateParkingVisible();
+    return;
+  }
+  for (const Outgoing& out : m_txQueue) {
+    if (out.reason == QStringLiteral("PDC request")) {
+      return;  // previous one not sent yet
+    }
+  }
+  ++m_pdcUnanswered;
+  enqueue(pdcSensorRequestFrame(), QStringLiteral("PDC request"));
+}
+
+void IbusService::updateParkingVisible() {
+  const bool pdcRecent = m_lastPdcActivity.isValid() && m_lastPdcActivity.elapsed() < 3750;
+  const bool visible = m_parkingSensors && m_fd >= 0 && busAwake() && m_parkingHeard &&
+                       (m_state.reverse() || (m_parking.active && pdcRecent));
+  if (visible == m_parkingVisible) {
+    return;
+  }
+  m_parkingVisible = visible;
+  if (!visible) {
+    m_parkingHeard = false;
+    m_parking = ParkDistances{};
+  }
+  log(visible ? QStringLiteral("Parking screen on") : QStringLiteral("Parking screen off"));
+  emit parkingChanged(parkingState());
 }
 
 void IbusService::logUnknownFrame(const IbusFrame& frame) {
@@ -484,10 +593,21 @@ void IbusService::handleInput(const InputEvent& event) {
   }
 }
 
-void IbusService::setSettings(bool pollObc, bool bmbtInput, bool mflInput, bool clusterText) {
+void IbusService::setSettings(bool pollObc, bool bmbtInput, bool mflInput, bool clusterText,
+                              bool parkingSensors) {
   if (pollObc == m_pollObc && bmbtInput == m_bmbtInput && mflInput == m_mflInput &&
-      clusterText == m_clusterText) {
+      clusterText == m_clusterText && parkingSensors == m_parkingSensors) {
     return;
+  }
+  if (parkingSensors != m_parkingSensors) {
+    log(QStringLiteral("Settings: parking sensors %1").arg(parkingSensors ? "on" : "off"));
+    m_parkingSensors = parkingSensors;
+    if (!parkingSensors) {
+      m_pdcTimer->stop();
+    } else if (m_state.reverse()) {
+      startParking(QStringLiteral("reverse gear"));
+    }
+    updateParkingVisible();
   }
   log(QStringLiteral("Settings: OBC polling %1, BMBT input %2, MFL input %3, cluster text %4")
           .arg(pollObc ? "on" : "off", bmbtInput ? "on" : "off", mflInput ? "on" : "off",

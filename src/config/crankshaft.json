@@ -140,6 +140,10 @@
       "input": {
         "to_android_auto": true
       },
+      "pdc": {
+        "enabled": true,
+        "interval_ms": 750
+      },
       "ike": {
         "send_text": true,
         "alert_distance_m": 200,

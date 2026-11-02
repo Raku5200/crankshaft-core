@@ -150,6 +150,9 @@ auto VehicleState::toVariantMap() const -> QVariantMap {
   map[QStringLiteral("rpm")] = rpm;
   map[QStringLiteral("ambientC")] = ambientC;
   map[QStringLiteral("coolantC")] = coolantC;
+  map[QStringLiteral("gear")] = gear;
+  map[QStringLiteral("reverse")] = reverse();
+  map[QStringLiteral("handbrake")] = handbrake;
   map[QStringLiteral("time")] = time;
   map[QStringLiteral("date")] = date;
   map[QStringLiteral("outsideTemp")] = outsideTemp;
@@ -196,6 +199,13 @@ auto applyClusterFrame(const IbusFrame& frame, VehicleState& state) -> bool {
         return changed;
       }
       return false;
+    case 0x13:
+      if (d.size() >= 3) {
+        bool changed = assign(state.handbrake, (byteAt(d, 1) & 0x01) != 0);
+        changed |= assign(state.gear, static_cast<int>(byteAt(d, 2) >> 4));
+        return changed;
+      }
+      return false;
     case 0x18:
       if (d.size() >= 3) {
         const quint8 speed = byteAt(d, 1);
@@ -235,6 +245,49 @@ auto applyClusterFrame(const IbusFrame& frame, VehicleState& state) -> bool {
     default:
       return false;
   }
+}
+
+auto ParkDistances::toVariantMap() const -> QVariantMap {
+  QVariantMap map;
+  map[QStringLiteral("active")] = active;
+  map[QStringLiteral("frontLeft")] = frontLeft;
+  map[QStringLiteral("frontCenterLeft")] = frontCenterLeft;
+  map[QStringLiteral("frontCenterRight")] = frontCenterRight;
+  map[QStringLiteral("frontRight")] = frontRight;
+  map[QStringLiteral("rearLeft")] = rearLeft;
+  map[QStringLiteral("rearCenterLeft")] = rearCenterLeft;
+  map[QStringLiteral("rearCenterRight")] = rearCenterRight;
+  map[QStringLiteral("rearRight")] = rearRight;
+  return map;
+}
+
+auto pdcSensorRequestFrame() -> QByteArray {
+  return ibusFrame(kAddrDiagnostics, kAddrPdc, QByteArray(1, static_cast<char>(0x1B)));
+}
+
+auto decodePdcDistances(const IbusFrame& frame, ParkDistances& out) -> bool {
+  // 60 LL 3F A0 <rl> <rr> <rcl> <rcr> <fl> <fr> <fcl> <fcr> <status> ...
+  // (byte order as decoded by BlueBus; data[0] is the command, data[1] a
+  // status byte, data[10] bit 0 = PDC switched on).
+  const QByteArray& d = frame.data;
+  if (frame.source != kAddrPdc || frame.command() != 0xA0 || d.size() < 11) {
+    return false;
+  }
+  out.rearLeft = byteAt(d, 2);
+  out.rearRight = byteAt(d, 3);
+  out.rearCenterLeft = byteAt(d, 4);
+  out.rearCenterRight = byteAt(d, 5);
+  out.frontLeft = byteAt(d, 6);
+  out.frontRight = byteAt(d, 7);
+  out.frontCenterLeft = byteAt(d, 8);
+  out.frontCenterRight = byteAt(d, 9);
+  out.active = (byteAt(d, 10) & 0x01) != 0;
+  return true;
+}
+
+auto isPdcActivation(const IbusFrame& frame) -> bool {
+  return frame.source == kAddrPdc &&
+         (frame.command() == 0x07 || (frame.destination == 0xD0 && frame.command() == 0x5A));
 }
 
 auto obcControlFrame(quint8 property, quint8 control, quint8 source) -> QByteArray {

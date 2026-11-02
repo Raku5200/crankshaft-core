@@ -201,6 +201,9 @@ void WebSocketServer::setIbusService(crankshaft::ibus::IbusService* ibusService)
   }
   connect(ibusService, &IbusService::statusChanged, this,
           [this](const QVariantMap& status) { broadcastEvent(QStringLiteral("ibus/status"), status); });
+  connect(ibusService, &IbusService::parkingChanged, this, [this](const QVariantMap& parking) {
+    broadcastEvent(QStringLiteral("ibus/parking"), parking);
+  });
   connect(ibusService, &IbusService::vehicleStateChanged, this,
           [this](const QVariantMap& state) { broadcastEvent(QStringLiteral("ibus/obc"), state); });
   connect(ibusService, &IbusService::inputReceived, this,
@@ -482,6 +485,7 @@ void WebSocketServer::handleSubscribe(QWebSocket* client, const QString& topic) 
     if (topic.startsWith(QStringLiteral("ibus")) && m_ibusService) {
       broadcastEvent(QStringLiteral("ibus/status"), m_ibusService->status());
       broadcastEvent(QStringLiteral("ibus/obc"), m_ibusService->vehicleState());
+      broadcastEvent(QStringLiteral("ibus/parking"), m_ibusService->parkingState());
     }
 
     // Send current Android Auto state when subscribing to android-auto topics
@@ -534,7 +538,8 @@ void WebSocketServer::handlePublish(const QString& topic, const QVariantMap& pay
       m_ibusService->setSettings(payload.value(QStringLiteral("pollObc")).toBool(),
                                  payload.value(QStringLiteral("bmbtInput"), true).toBool(),
                                  payload.value(QStringLiteral("mflInput"), true).toBool(),
-                                 payload.value(QStringLiteral("clusterText"), true).toBool());
+                                 payload.value(QStringLiteral("clusterText"), true).toBool(),
+                                 payload.value(QStringLiteral("parkingSensors"), true).toBool());
     } else if (topic == QStringLiteral("ibus/cluster-text-resume")) {
       m_ibusService->resumeClusterText();
     } else if (topic == QStringLiteral("ibus/input-target")) {
