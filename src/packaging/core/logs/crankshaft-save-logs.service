@@ -1,0 +1,9 @@
+# Project: Crankshaft
+# Copies the logs to the SD card's boot partition (see crankshaft-save-logs).
+[Unit]
+Description=Crankshaft: save logs to the SD card
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/crankshaft/crankshaft-save-logs
+TimeoutStartSec=120

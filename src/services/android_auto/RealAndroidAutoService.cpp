@@ -5495,7 +5495,8 @@ bool RealAndroidAutoService::sendTouchInput(int x, int y, int action) {
     const bool hasPointer = touchEvent && touchEvent->pointer_data_size() > 0;
     const auto* pointer = hasPointer ? &touchEvent->pointer_data(0) : nullptr;
 
-    Logger::instance().info(
+    const bool logThis = touchAction != TouchAction::ACTION_MOVED;
+    if (logThis) Logger::instance().info(
         QString("[AA][touch] report #%1: inputChannel=%2 resolution=%3x%4 "
                 "timestamp=%5 bytes=%6 action=%7 actionIndex=%8 pointers=%9 "
                 "pointer0=(%10,%11,id=%12)")
@@ -5517,8 +5518,8 @@ bool RealAndroidAutoService::sendTouchInput(int x, int y, int action) {
     auto promise = aasdk::channel::SendPromise::defer(*m_strand);
     const quint64 reportNumber = m_touchInputCount;
     promise->then(
-        [reportNumber, actionLabel]() {
-          Logger::instance().info(
+        [reportNumber, actionLabel, logThis]() {
+          if (logThis) Logger::instance().info(
               QString("[AA][touch] report #%1 transport send SUCCESS action=%2")
                   .arg(reportNumber)
                   .arg(actionLabel));
@@ -5542,7 +5543,7 @@ bool RealAndroidAutoService::sendTouchInput(int x, int y, int action) {
 
     m_inputChannel->sendInputReport(data, std::move(promise));
 
-    Logger::instance().info(
+    if (logThis) Logger::instance().info(
         QString("[AA][touch] report #%1 handed to InputSourceService: x=%2 y=%3 action=%4")
             .arg(reportNumber)
             .arg(boundedX)

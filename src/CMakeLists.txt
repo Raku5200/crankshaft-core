@@ -321,6 +321,20 @@ install(FILES ${CMAKE_SOURCE_DIR}/packaging/core/hotspot/crankshaft-aa-hotspot.s
   COMPONENT core
 )
 
+# Save logs to the SD card (Settings > Car): helper, unit and polkit rule
+install(FILES ${CMAKE_SOURCE_DIR}/packaging/core/logs/52-crankshaft-save-logs.rules
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/polkit-1/rules.d
+  COMPONENT core
+)
+install(PROGRAMS ${CMAKE_SOURCE_DIR}/packaging/core/logs/crankshaft-save-logs
+  DESTINATION lib/crankshaft
+  COMPONENT core
+)
+install(FILES ${CMAKE_SOURCE_DIR}/packaging/core/logs/crankshaft-save-logs.service
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/system
+  COMPONENT core
+)
+
 # Install systemd service unit
 install(FILES ${CMAKE_SOURCE_DIR}/packaging/core/crankshaft-core.service
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/system

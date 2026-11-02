@@ -29,10 +29,10 @@
       },
       "logging": {
         "enabled": true,
-        "level": "debug",
+        "level": "info",
         "file_path": "/var/log/crankshaft/android_auto.log",
         "verbose_usb": false,
-        "channel_debug": true
+        "channel_debug": false
       },
       "usb": {
         "startup_detection_delay_ms": 0,

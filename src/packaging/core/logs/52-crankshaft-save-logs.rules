@@ -1,0 +1,9 @@
+// Project: Crankshaft
+// Let crankshaft-core (Settings > Car > Save logs) start the log copy unit.
+polkit.addRule(function(action, subject) {
+    if (subject.user === "crankshaft" &&
+        action.id === "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") === "crankshaft-save-logs.service") {
+        return polkit.Result.YES;
+    }
+});

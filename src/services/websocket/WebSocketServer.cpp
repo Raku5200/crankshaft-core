@@ -21,7 +21,13 @@
 
 #include "../ibus/IbusService.h"
 
+#include <memory>
+
 #include <QBuffer>
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
 #include <QDateTime>
 #include <QFile>
 #include <QImage>
@@ -529,7 +535,63 @@ void WebSocketServer::handleSubscribe(QWebSocket* client, const QString& topic) 
   }
 }
 
+void WebSocketServer::saveLogsToSdCard() {
+  static const QString kResult = QStringLiteral("/run/crankshaft/save-logs.result");
+  const auto report = [this](bool ok, const QString& message) {
+    m_savingLogs = false;
+    Logger::instance().info(QString("[Logs] Save to SD card: %1").arg(message));
+    broadcastEvent(QStringLiteral("system/save-logs-result"),
+                   {{QStringLiteral("state"), ok ? QStringLiteral("done") : QStringLiteral("error")},
+                    {QStringLiteral("message"), message}});
+  };
+  if (m_savingLogs) {
+    return;
+  }
+  m_savingLogs = true;
+  QFile::remove(kResult);
+  broadcastEvent(QStringLiteral("system/save-logs-result"),
+                 {{QStringLiteral("state"), QStringLiteral("saving")}});
+
+  QDBusMessage msg = QDBusMessage::createMethodCall(
+      QStringLiteral("org.freedesktop.systemd1"), QStringLiteral("/org/freedesktop/systemd1"),
+      QStringLiteral("org.freedesktop.systemd1.Manager"), QStringLiteral("StartUnit"));
+  msg.setArguments({QStringLiteral("crankshaft-save-logs.service"), QStringLiteral("replace")});
+  auto* watcher =
+      new QDBusPendingCallWatcher(QDBusConnection::systemBus().asyncCall(msg, 10000), this);
+  connect(watcher, &QDBusPendingCallWatcher::finished, this,
+          [this, report](QDBusPendingCallWatcher* call) {
+            call->deleteLater();
+            if (call->isError()) {
+              report(false, QStringLiteral("could not start: %1").arg(call->error().message()));
+              return;
+            }
+            // The unit writes its result file when done (usually a few seconds).
+            auto* poll = new QTimer(this);
+            auto tries = std::make_shared<int>(0);
+            connect(poll, &QTimer::timeout, this, [poll, tries, report]() {
+              QFile file(kResult);
+              if (file.open(QIODevice::ReadOnly)) {
+                const QString line = QString::fromUtf8(file.readAll()).trimmed();
+                poll->deleteLater();
+                if (line.startsWith(QStringLiteral("ok "))) {
+                  report(true, line.mid(3));
+                } else {
+                  report(false, line.startsWith(QStringLiteral("error ")) ? line.mid(6) : line);
+                }
+              } else if (++*tries > 240) {
+                poll->deleteLater();
+                report(false, QStringLiteral("timed out"));
+              }
+            });
+            poll->start(500);
+          });
+}
+
 void WebSocketServer::handlePublish(const QString& topic, const QVariantMap& payload) {
+  if (topic == QStringLiteral("system/save-logs")) {
+    saveLogsToSdCard();
+    return;
+  }
   if (topic.startsWith(QStringLiteral("ibus/")) && m_ibusService) {
     if (topic == QStringLiteral("ibus/obc-control")) {
       m_ibusService->sendObcControl(payload.value(QStringLiteral("property")).toInt(),
@@ -684,12 +746,6 @@ void WebSocketServer::handlePublish(const QString& topic, const QVariantMap& pay
       } else if (topic == QStringLiteral("android-auto/touch")) {
         ++m_touchEventCount;
         const QSize displayResolution = aaService->getDisplayResolution();
-        Logger::instance().info(
-            QString("[WebSocketServer] AA touch received #%1: payload=%2 display=%3x%4")
-                .arg(m_touchEventCount)
-                .arg(QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(payload)).toJson(QJsonDocument::Compact)))
-                .arg(displayResolution.width())
-                .arg(displayResolution.height()));
         const double rawX = payload.value(QStringLiteral("x")).toDouble();
         const double rawY = payload.value(QStringLiteral("y")).toDouble();
 
@@ -715,6 +771,9 @@ void WebSocketServer::handlePublish(const QString& topic, const QVariantMap& pay
         }
 
         const bool accepted = aaService->sendTouchInput(x, y, action);
+        // Moves come at up to 60 Hz: logging each one on this thread delays
+        // the next touch on a Pi Zero, so only presses/releases are logged.
+        if (action != 2 || !accepted)
         Logger::instance().info(
             QString("[WebSocketServer] AA touch dispatch #%1: raw=%2,%3 mapped=%4,%5 "
                     "actionName=%6 action=%7 accepted=%8")

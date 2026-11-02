@@ -19,7 +19,9 @@
 
 #pragma once
 
+#include <QFile>
 #include <QJsonObject>
+#include <QMutex>
 #include <QObject>
 #include <QString>
 
@@ -76,4 +78,8 @@ class Logger : public QObject {
   bool m_jsonFormat{true};                // Default to JSON format
   qint64 m_maxLogSize{10 * 1024 * 1024};  // 10 MB default
   qint64 m_currentLogSize{0};
+  // Opened once and kept open: opening and closing the file for every line
+  // costs several ms each on a Pi's SD card, on whichever thread logs.
+  QFile m_file;
+  QMutex m_fileMutex;
 };

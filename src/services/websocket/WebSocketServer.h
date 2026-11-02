@@ -336,6 +336,10 @@ class WebSocketServer : public QObject {
   void handleUnsubscribe(QWebSocket* client, const QString& topic);
   /// Handle event publication from internal service
   void handlePublish(const QString& topic, const QVariantMap& payload);
+  /// Settings > Car > Save logs: copy the logs to the SD card's boot partition
+  /// (crankshaft-save-logs.service) and report on system/save-logs-result.
+  void saveLogsToSdCard();
+  bool m_savingLogs = false;
   /// Handle localhost-only admin API requests from provisioning UI
   void handleAdminApiRequest(QWebSocket* client, const QJsonObject& request);
   /// Route service command to appropriate service handler

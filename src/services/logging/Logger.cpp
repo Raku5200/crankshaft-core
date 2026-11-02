@@ -38,6 +38,10 @@ void Logger::setLevel(Level level) {
 }
 
 void Logger::setLogFile(const QString& filePath) {
+  QMutexLocker lock(&m_fileMutex);
+  if (m_file.isOpen()) {
+    m_file.close();
+  }
   m_logFile = filePath;
   m_currentLogSize = 0;
 
@@ -99,15 +103,19 @@ void Logger::logStructured(Level level, const QString& component, const QString&
   qDebug().noquote() << logMessage;
 
   // File output
+  QMutexLocker lock(&m_fileMutex);
   if (!m_logFile.isEmpty()) {
     rotateLogIfNeeded();
-    QFile file(m_logFile);
-    if (file.open(QIODevice::WriteOnly | QIODevice::Append)) {
-      QTextStream stream(&file);
-      stream << logMessage << "\n";
-      m_currentLogSize += logMessage.length() + 1;  // +1 for newline
-      file.close();
+    if (!m_file.isOpen()) {
+      m_file.setFileName(m_logFile);
+      if (!m_file.open(QIODevice::WriteOnly | QIODevice::Append)) {
+        return;
+      }
     }
+    const QByteArray bytes = logMessage.toUtf8() + '\n';
+    m_file.write(bytes);
+    m_file.flush();  // one write() syscall; no open/close or fsync
+    m_currentLogSize += bytes.size();
   }
 }
 
@@ -141,6 +149,9 @@ void Logger::rotateLogIfNeeded() {
   if (m_currentLogSize >= m_maxLogSize && !m_logFile.isEmpty()) {
     QString rotatedFile =
         m_logFile + "." + QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss");
+    if (m_file.isOpen()) {
+      m_file.close();
+    }
     QFile::rename(m_logFile, rotatedFile);
     m_currentLogSize = 0;
 

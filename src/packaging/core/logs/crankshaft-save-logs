@@ -1,0 +1,60 @@
+#!/bin/bash
+# Project: Crankshaft
+# Copy the Crankshaft logs to the SD card's boot partition (FAT, readable on
+# any PC) so they can be read without a network connection to the Pi.
+# Started by crankshaft-core (Settings > Car > Save logs) via
+# crankshaft-save-logs.service; the result goes to /run/crankshaft.
+set -u
+RESULT=/run/crankshaft/save-logs.result
+
+finish() {
+    if [ -d /run/crankshaft ]; then
+        echo "$1" > "$RESULT"
+        chmod 0644 "$RESULT"
+    fi
+}
+
+BOOT=/boot/firmware
+if ! mountpoint -q "$BOOT"; then
+    BOOT=/boot
+fi
+if ! mountpoint -q "$BOOT"; then
+    finish "error boot partition not mounted"
+    exit 1
+fi
+# The boot partition may be mounted read-only.
+REMOUNTED=0
+if ! touch "$BOOT/.crankshaft-write-test" 2>/dev/null; then
+    mount -o remount,rw "$BOOT" && REMOUNTED=1
+fi
+rm -f "$BOOT/.crankshaft-write-test"
+
+STAMP=$(date +%Y%m%d-%H%M%S)
+DIR="$BOOT/crankshaft-logs/$STAMP"
+if ! mkdir -p "$DIR"; then
+    finish "error cannot write to the SD card boot partition"
+    exit 1
+fi
+
+LINES=60000
+journalctl -b -u crankshaft-core --no-pager -o short-precise -n "$LINES" > "$DIR/core.txt" 2>&1
+journalctl -b -u 'crankshaft-ui*' --no-pager -o short-precise -n "$LINES" > "$DIR/ui.txt" 2>&1
+journalctl -b -p warning --no-pager -o short-precise -n 5000 > "$DIR/system-warnings.txt" 2>&1
+{
+    date; uptime; echo
+    vcgencmd get_throttled 2>&1; vcgencmd measure_temp 2>&1; echo
+    free -m; echo
+    df -h; echo
+    top -bn1 | head -30; echo
+    lsusb 2>&1; echo
+    ip addr 2>&1
+} > "$DIR/system.txt" 2>&1
+for f in /var/log/crankshaft/*.log; do
+    [ -f "$f" ] && tail -c 4000000 "$f" > "$DIR/$(basename "$f")"
+done
+
+# Keep the five newest sets so the partition doesn't fill up.
+ls -1dt "$BOOT"/crankshaft-logs/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf
+sync
+[ "$REMOUNTED" = 1 ] && mount -o remount,ro "$BOOT"
+finish "ok crankshaft-logs/$STAMP"
