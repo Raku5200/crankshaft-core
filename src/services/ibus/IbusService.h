@@ -78,7 +78,7 @@ class IbusService : public QObject {
   /// the factory nav/monitor already asks), and which car controls to use.
   /// clusterText: show the Android Auto line (song / turn) on the cluster.
   void setSettings(bool pollObc, bool bmbtInput, bool mflInput, bool clusterText = true);
-  /// Show the Android Auto line again after the BC button paused it.
+  /// Show the Android Auto line again now, after the BC button paused it.
   void resumeClusterText();
 
  signals:
@@ -154,8 +154,10 @@ class IbusService : public QObject {
   QByteArray m_lastAlertLine;
   bool m_alertShown = false;
   // The driver picked OBC values on the cluster (BC button): leave the
-  // display alone until the next ignition cycle.
+  // display alone until the song or the navigation instruction changes.
   bool m_clusterTextPaused = false;
+  QString m_clusterContentKey;        // content of the latest AA line
+  QString m_pausedClusterContentKey;  // content showing when BC was pressed
   QSet<quint32> m_loggedFrameKinds;
 
   quint64 m_framesRx = 0;

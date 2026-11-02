@@ -419,7 +419,8 @@ void IbusService::pauseClusterText(const QString& why) {
   }
   m_clusterTextPaused = true;
   m_lastIkeLine.clear();
-  log(QStringLiteral("%1: cluster shows OBC values, Android Auto text paused until ignition off")
+  m_pausedClusterContentKey = m_clusterContentKey;
+  log(QStringLiteral("%1: cluster shows OBC values, Android Auto text paused until the next song or turn")
           .arg(why));
   if (m_alertShown) {
     m_alertShown = false;
@@ -648,6 +649,21 @@ void IbusService::sendObcControl(int property, int control) {
 }
 
 void IbusService::setClusterText(const QVariantMap& clusterText) {
+  // A scroll step or distance countdown keeps the same key; a new song or a
+  // new turn changes it.
+  const QString key = clusterText.contains(QStringLiteral("contentKey"))
+                          ? clusterText.value(QStringLiteral("contentKey")).toString()
+                          : clusterText.value(QStringLiteral("line")).toString();
+  m_clusterContentKey = key;
+  if (m_clusterTextPaused) {
+    if (key.isEmpty() || key == m_pausedClusterContentKey) {
+      return;  // still the line the driver switched away from
+    }
+    m_clusterTextPaused = false;
+    m_lastIkeLine.clear();
+    log(QStringLiteral("New song or turn: Android Auto text back on the cluster"));
+    publishStatus();
+  }
   if (!m_sendIkeText || !m_clusterText || m_clusterTextPaused || !busAwake() ||
       m_state.ignition == 0) {
     return;

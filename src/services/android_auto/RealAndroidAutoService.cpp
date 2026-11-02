@@ -9093,6 +9093,18 @@ void RealAndroidAutoService::publishClusterText() {
   text[QStringLiteral("alert")] = alert;
   text[QStringLiteral("navigationLine")] = QString::fromLatin1(navigationLine);
   text[QStringLiteral("mediaLine")] = QString::fromLatin1(mediaLine);
+  // What the line is about, without the scroll position or the distance
+  // countdown: changes only for a new song or a new turn / road.
+  QString contentKey;
+  if (source == QStringLiteral("navigation")) {
+    contentKey = QStringLiteral("navigation:%1:%2:%3")
+                     .arg(static_cast<int>(m_navigationGuidance.maneuver))
+                     .arg(m_navigationGuidance.roundaboutExit)
+                     .arg(m_navigationGuidance.road);
+  } else if (source == QStringLiteral("media")) {
+    contentKey = QStringLiteral("media:") + QString::fromLatin1(mediaLine);
+  }
+  text[QStringLiteral("contentKey")] = contentKey;
   text[QStringLiteral("titleFrame")] = line.isEmpty() ? QString() : toHex(ikeTelephoneTextFrame(line));
   text[QStringLiteral("checkControlFrame")] =
       alert ? toHex(ikeCheckControlTextFrame(line)) : QString();

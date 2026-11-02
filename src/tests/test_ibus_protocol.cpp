@@ -377,7 +377,7 @@ TEST(IbusServiceTest, ClusterTextGoesToIke) {
   ConfigService::instance().set("core.ibus.device", "auto");
 }
 
-TEST(IbusServiceTest, BcButtonPausesClusterTextUntilIgnitionOff) {
+TEST(IbusServiceTest, BcButtonStopsScrollingUntilNewSongOrTurn) {
   ensureApp();
   FakeBus bus;
   ASSERT_GE(bus.master, 0);
@@ -387,7 +387,7 @@ TEST(IbusServiceTest, BcButtonPausesClusterTextUntilIgnitionOff) {
   bus.send(QByteArray::fromHex("8004BF110329"));  // ignition on (KL-15)
   bus.run(200);
 
-  service.setClusterText({{"line", "Song one"}});
+  service.setClusterText({{"line", "Song one"}, {"contentKey", "media:Song one"}});
   bus.run(300);
   ASSERT_EQ(bus.sent.size(), 1);
 
@@ -395,20 +395,35 @@ TEST(IbusServiceTest, BcButtonPausesClusterTextUntilIgnitionOff) {
   bus.run(200);
   EXPECT_TRUE(service.status().value("clusterTextPaused").toBool());
   bus.sent.clear();
-  service.setClusterText({{"line", "ong one S"}});  // scrolling
-  service.setClusterText({{"line", "Song two"}});
+  service.setClusterText({{"line", "ong one S"}, {"contentKey", "media:Song one"}});  // scrolling
+  service.setClusterText({{"line", "ng one So"}, {"contentKey", "media:Song one"}});
   bus.run(300);
   EXPECT_TRUE(bus.sent.isEmpty());
+  EXPECT_TRUE(service.status().value("clusterTextPaused").toBool());
 
-  bus.send(QByteArray::fromHex("8004BF11002A"));  // ignition off
-  bus.run(100);
-  EXPECT_FALSE(service.status().value("clusterTextPaused").toBool());
-  bus.send(QByteArray::fromHex("8004BF110329"));  // next drive
-  bus.run(100);
-  service.setClusterText({{"line", "Song two"}});
+  service.setClusterText({{"line", "Song two"}, {"contentKey", "media:Song two"}});  // next song
   bus.run(300);
   ASSERT_EQ(bus.sent.size(), 1);
   EXPECT_EQ(bus.sent[0], ikeTelephoneTextFrame("Song two"));
+  EXPECT_FALSE(service.status().value("clusterTextPaused").toBool());
+
+  // Navigation: the distance counting down is not new information...
+  bus.send(QByteArray::fromHex("8004FF57022E"));
+  bus.run(100);
+  bus.sent.clear();
+  service.setClusterText({{"line", "> 300m Galle Rd"}, {"contentKey", "navigation:2:0:Galle Rd"}});
+  bus.run(300);
+  ASSERT_EQ(bus.sent.size(), 1);  // ...but switching from song to a turn is
+  bus.send(QByteArray::fromHex("8004FF57022E"));
+  bus.run(100);
+  bus.sent.clear();
+  service.setClusterText({{"line", "> 250m Galle Rd"}, {"contentKey", "navigation:2:0:Galle Rd"}});
+  bus.run(300);
+  EXPECT_TRUE(bus.sent.isEmpty());
+  service.setClusterText({{"line", "< 400m Duplication"}, {"contentKey", "navigation:1:0:Duplication"}});
+  bus.run(300);
+  ASSERT_EQ(bus.sent.size(), 1);
+  EXPECT_EQ(bus.sent[0], ikeTelephoneTextFrame("< 400m Duplication"));
 
   // Switched off in Settings: nothing is sent at all.
   service.setSettings(false, true, true, false);
