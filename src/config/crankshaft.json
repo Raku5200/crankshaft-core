@@ -132,6 +132,7 @@
       "enabled": true,
       "device": "auto",
       "source_address": 59,
+      "poll_obc": false,
       "poll_interval_s": 10,
       "idle_gap_ms": 10,
       "max_retries": 3,

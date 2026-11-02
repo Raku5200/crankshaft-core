@@ -530,6 +530,10 @@ void WebSocketServer::handlePublish(const QString& topic, const QVariantMap& pay
     if (topic == QStringLiteral("ibus/obc-control")) {
       m_ibusService->sendObcControl(payload.value(QStringLiteral("property")).toInt(),
                                     payload.value(QStringLiteral("control")).toInt());
+    } else if (topic == QStringLiteral("ibus/settings")) {
+      m_ibusService->setSettings(payload.value(QStringLiteral("pollObc")).toBool(),
+                                 payload.value(QStringLiteral("bmbtInput"), true).toBool(),
+                                 payload.value(QStringLiteral("mflInput"), true).toBool());
     } else if (topic == QStringLiteral("ibus/input-target")) {
       m_ibusService->setInputTarget(payload.value(QStringLiteral("target")).toString());
     }

@@ -73,6 +73,9 @@ class IbusService : public QObject {
   void sendObcControl(int property, int control);
   /// "android-auto" (default) or "ui": where BMBT/MFL input goes.
   void setInputTarget(const QString& target);
+  /// UI settings: poll the cluster for OBC values (off = only listen, e.g. when
+  /// the factory nav/monitor already asks), and which car controls to use.
+  void setSettings(bool pollObc, bool bmbtInput, bool mflInput);
 
  signals:
   void statusChanged(const QVariantMap& status);
@@ -109,6 +112,9 @@ class IbusService : public QObject {
   QString m_devicePath;  // "auto" or a path
   quint8 m_sourceAddress = kAddrGt;
   int m_pollIntervalMs = 10000;
+  bool m_pollObc = false;
+  bool m_bmbtInput = true;
+  bool m_mflInput = true;
   int m_idleGapMs = 10;
   int m_maxRetries = 3;
   int m_busAwakeWindowMs = 30000;

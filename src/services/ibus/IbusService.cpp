@@ -73,7 +73,10 @@ IbusService::IbusService(QObject* parent) : QObject(parent) {
   m_devicePath = config.get(QStringLiteral("core.ibus.device"), QStringLiteral("auto")).toString();
   m_sourceAddress =
       static_cast<quint8>(boundedInt("core.ibus.source_address", kAddrGt, 0x00, 0xFF));
-  m_pollIntervalMs = boundedInt("core.ibus.poll_interval_s", 10, 0, 3600) * 1000;
+  m_pollIntervalMs = boundedInt("core.ibus.poll_interval_s", 10, 1, 3600) * 1000;
+  // Off by default: a factory nav computer / monitor already asks the cluster,
+  // and its answers are read too. The UI setting overrides this.
+  m_pollObc = config.get(QStringLiteral("core.ibus.poll_obc"), false).toBool();
   m_idleGapMs = boundedInt("core.ibus.idle_gap_ms", 10, 2, 200);
   m_maxRetries = boundedInt("core.ibus.max_retries", 3, 0, 10);
   m_busAwakeWindowMs = boundedInt("core.ibus.bus_awake_window_s", 30, 2, 600) * 1000;
@@ -157,10 +160,11 @@ void IbusService::start() {
     log(QStringLiteral("Disabled (core.ibus.enabled=false)"));
     return;
   }
-  log(QStringLiteral("Starting (device=%1, source=0x%2, poll=%3 s)")
+  log(QStringLiteral("Starting (device=%1, source=0x%2, OBC polling %3)")
           .arg(m_devicePath)
           .arg(m_sourceAddress, 2, 16, QLatin1Char('0'))
-          .arg(m_pollIntervalMs / 1000));
+          .arg(m_pollObc ? QStringLiteral("every %1 s").arg(m_pollIntervalMs / 1000)
+                         : QStringLiteral("off")));
   m_statusTimer->start();
   tryOpen();
   if (m_fd < 0) {
@@ -191,6 +195,9 @@ auto IbusService::status() const -> QVariantMap {
   map[QStringLiteral("collisions")] = static_cast<qulonglong>(m_collisions);
   map[QStringLiteral("droppedBytes")] = static_cast<qulonglong>(m_parser.droppedBytes());
   map[QStringLiteral("inputTarget")] = m_inputTarget;
+  map[QStringLiteral("pollObc")] = m_pollObc;
+  map[QStringLiteral("bmbtInput")] = m_bmbtInput;
+  map[QStringLiteral("mflInput")] = m_mflInput;
   map[QStringLiteral("error")] = m_lastError;
   return map;
 }
@@ -287,7 +294,7 @@ auto IbusService::openSerial(const QString& path) -> bool {
   connect(m_notifier, &QSocketNotifier::activated, this, &IbusService::onReadable);
   log(QStringLiteral("Opened %1 (%2) at 9600 8E1").arg(path, m_openPath));
 
-  if (m_pollIntervalMs > 0) {
+  if (m_pollObc) {
     m_pollTimer->start(m_pollIntervalMs);
   }
   publishStatus();
@@ -380,6 +387,10 @@ auto IbusService::keyCodeFor(const InputEvent& event) const -> int {
 }
 
 void IbusService::handleInput(const InputEvent& event) {
+  if ((event.source == QStringLiteral("bmbt") && !m_bmbtInput) ||
+      (event.source == QStringLiteral("mfl") && !m_mflInput)) {
+    return;  // turned off in the UI: the car's own units handle these buttons
+  }
   QVariantMap map = event.toVariantMap();
   map[QStringLiteral("target")] = m_inputTarget;
   emit inputReceived(map);
@@ -402,6 +413,39 @@ void IbusService::handleInput(const InputEvent& event) {
   } else if (event.state == InputEvent::State::Release) {
     emit androidAutoKey(keyCode, false);
   }
+}
+
+void IbusService::setSettings(bool pollObc, bool bmbtInput, bool mflInput) {
+  if (pollObc == m_pollObc && bmbtInput == m_bmbtInput && mflInput == m_mflInput) {
+    return;
+  }
+  log(QStringLiteral("Settings: OBC polling %1, BMBT input %2, MFL input %3")
+          .arg(pollObc ? "on" : "off", bmbtInput ? "on" : "off", mflInput ? "on" : "off"));
+  const bool startPolling = pollObc && !m_pollObc;
+  m_pollObc = pollObc;
+  m_bmbtInput = bmbtInput;
+  m_mflInput = mflInput;
+  if (!m_pollObc) {
+    m_pollTimer->stop();
+    // Drop requests not sent yet.
+    QQueue<Outgoing> kept;
+    for (int i = 0; i < m_txQueue.size(); ++i) {
+      const Outgoing& out = m_txQueue.at(i);
+      const bool request = out.reason.startsWith(QStringLiteral("OBC request")) ||
+                           out.reason == QStringLiteral("units request");
+      if (!request || (i == 0 && m_awaitingEcho)) {
+        kept.enqueue(out);
+      }
+    }
+    m_txQueue = kept;
+  } else if (m_fd >= 0) {
+    m_pollTimer->start(m_pollIntervalMs);
+    if (startPolling) {
+      m_unitsRequested = false;
+      poll();
+    }
+  }
+  publishStatus();
 }
 
 void IbusService::setInputTarget(const QString& target) {
@@ -490,7 +534,7 @@ void IbusService::onEchoTimeout() {
 }
 
 void IbusService::poll() {
-  if (!busAwake()) {
+  if (!m_pollObc || !busAwake()) {
     return;
   }
   if (!m_unitsRequested) {

@@ -299,6 +299,7 @@ TEST(IbusServiceTest, PollsClusterAndReadsAnswersOverSerial) {
   FakeBus bus;
   ASSERT_GE(bus.master, 0);
   ConfigService::instance().set("core.ibus.device", bus.slavePath);
+  ConfigService::instance().set("core.ibus.poll_obc", true);
   IbusService service;
   QVariantMap lastState;
   QObject::connect(&service, &IbusService::vehicleStateChanged,
@@ -322,6 +323,7 @@ TEST(IbusServiceTest, PollsClusterAndReadsAnswersOverSerial) {
   EXPECT_EQ(status.value("collisions").toULongLong(), 0u);
   EXPECT_EQ(status.value("framesTx").toULongLong(), static_cast<qulonglong>(bus.sent.size()));
   ConfigService::instance().set("core.ibus.device", "auto");
+  ConfigService::instance().set("core.ibus.poll_obc", false);
 }
 
 TEST(IbusServiceTest, ResendsWhenEchoIsMissing) {
@@ -329,11 +331,12 @@ TEST(IbusServiceTest, ResendsWhenEchoIsMissing) {
   FakeBus bus;
   ASSERT_GE(bus.master, 0);
   ConfigService::instance().set("core.ibus.device", bus.slavePath);
-  ConfigService::instance().set("core.ibus.poll_interval_s", 0);
+  ConfigService::instance().set("core.ibus.poll_obc", true);
+  ConfigService::instance().set("core.ibus.poll_interval_s", 3600);
   IbusService service;
   service.start();
   bus.send(QByteArray::fromHex("8004BF110329"));  // KL-15
-  bus.run(300);  // units request goes out and is echoed: echo is known to work
+  bus.run(600);  // first poll goes out and is echoed: echo is known to work
   const int before = bus.sent.size();
   ASSERT_GE(before, 1);
 
@@ -347,6 +350,7 @@ TEST(IbusServiceTest, ResendsWhenEchoIsMissing) {
   EXPECT_EQ(service.status().value("collisions").toULongLong(), 1u);
   EXPECT_EQ(service.status().value("txFailures").toULongLong(), 0u);
   ConfigService::instance().set("core.ibus.device", "auto");
+  ConfigService::instance().set("core.ibus.poll_obc", false);
   ConfigService::instance().set("core.ibus.poll_interval_s", 10);
 }
 
@@ -355,12 +359,11 @@ TEST(IbusServiceTest, ClusterTextGoesToIke) {
   FakeBus bus;
   ASSERT_GE(bus.master, 0);
   ConfigService::instance().set("core.ibus.device", bus.slavePath);
-  ConfigService::instance().set("core.ibus.poll_interval_s", 0);
   IbusService service;
   service.start();
   bus.send(QByteArray::fromHex("8004BF110329"));
   bus.run(200);
-  bus.sent.clear();
+  EXPECT_TRUE(bus.sent.isEmpty());  // OBC polling is off by default
 
   service.setClusterText({{"line", "> 300m Galle Rd"}, {"alert", true}});
   service.setClusterText({{"line", "> 300m Galle Rd"}, {"alert", true}});  // unchanged: once
@@ -372,5 +375,40 @@ TEST(IbusServiceTest, ClusterTextGoesToIke) {
   EXPECT_EQ(bus.sent[1], ikeCheckControlTextFrame("> 300m Galle Rd"));
   EXPECT_EQ(bus.sent[2], ikeCheckControlClearFrame());
   ConfigService::instance().set("core.ibus.device", "auto");
-  ConfigService::instance().set("core.ibus.poll_interval_s", 10);
+}
+
+TEST(IbusServiceTest, SettingsTurnOffPollingAndCarControls) {
+  ensureApp();
+  FakeBus bus;
+  ASSERT_GE(bus.master, 0);
+  ConfigService::instance().set("core.ibus.device", bus.slavePath);
+  IbusService service;
+  QList<QVariantMap> inputs;
+  QList<int> keys;
+  QObject::connect(&service, &IbusService::inputReceived,
+                   [&](const QVariantMap& e) { inputs.append(e); });
+  QObject::connect(&service, &IbusService::androidAutoKey,
+                   [&](int code, bool) { keys.append(code); });
+  service.start();
+
+  service.setSettings(true, false, true);  // poll on, BMBT off, MFL on
+  bus.send(QByteArray::fromHex("8004BF110329"));
+  bus.run(800);
+  EXPECT_GE(bus.sent.size(), 6);  // units + OBC requests
+
+  bus.send(ibusFrame(0xF0, 0x3B, QByteArray::fromHex("4805")));  // BMBT confirm: ignored
+  bus.send(QByteArray::fromHex("5004683B0106"));                  // MFL next: used
+  bus.run(200);
+  ASSERT_EQ(inputs.size(), 1);
+  EXPECT_EQ(inputs[0].value("source").toString(), "mfl");
+  EXPECT_EQ(keys, QList<int>({87}));
+
+  service.setSettings(false, true, false);  // poll off, BMBT on, MFL off
+  bus.sent.clear();
+  bus.send(QByteArray::fromHex("5004683B0106"));
+  bus.run(300);
+  EXPECT_EQ(inputs.size(), 1);
+  EXPECT_TRUE(bus.sent.isEmpty());
+  EXPECT_FALSE(service.status().value("pollObc").toBool());
+  ConfigService::instance().set("core.ibus.device", "auto");
 }
