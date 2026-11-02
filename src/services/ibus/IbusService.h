@@ -131,7 +131,7 @@ class IbusService : public QObject {
   bool m_mflInput = true;
   bool m_clusterText = true;
   bool m_parkingSensors = true;
-  int m_pdcIntervalMs = 750;
+  int m_pdcIntervalMs = 250;
   int m_idleGapMs = 10;
   int m_maxRetries = 3;
   int m_busAwakeWindowMs = 30000;

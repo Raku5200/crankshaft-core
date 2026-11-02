@@ -532,7 +532,7 @@ TEST(IbusServiceTest, ReverseWithoutPdcModuleGivesUp) {
   bus.send(QByteArray::fromHex("8004BF110329"));
   bus.send(QByteArray::fromHex("800ABF130111000000004670"));
   bus.run(6000);
-  EXPECT_EQ(bus.sent.count(pdcSensorRequestFrame()), 4);
+  EXPECT_EQ(bus.sent.count(pdcSensorRequestFrame()), 12);  // ~3 s at 250 ms
   EXPECT_FALSE(service.parkingState().value("visible").toBool());
   ConfigService::instance().set("core.ibus.device", "auto");
 }

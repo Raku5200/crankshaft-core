@@ -19,6 +19,7 @@
 
 #include "IbusService.h"
 
+#include <algorithm>
 #include <fcntl.h>
 #include <termios.h>
 #include <unistd.h>
@@ -74,7 +75,7 @@ IbusService::IbusService(QObject* parent) : QObject(parent) {
   m_sourceAddress =
       static_cast<quint8>(boundedInt("core.ibus.source_address", kAddrGt, 0x00, 0xFF));
   m_pollIntervalMs = boundedInt("core.ibus.poll_interval_s", 10, 1, 3600) * 1000;
-  m_pdcIntervalMs = boundedInt("core.ibus.pdc.interval_ms", 750, 300, 5000);
+  m_pdcIntervalMs = boundedInt("core.ibus.pdc.interval_ms", 250, 150, 5000);
   m_parkingSensors = config.get(QStringLiteral("core.ibus.pdc.enabled"), true).toBool();
   // Off by default: a factory nav computer / monitor already asks the cluster,
   // and its answers are read too. The UI setting overrides this.
@@ -474,10 +475,13 @@ void IbusService::onParkingTick() {
     return;
   }
   // The factory nav/monitor may already be asking: then just listen.
-  if (m_lastPdcAnswer.isValid() && m_lastPdcAnswer.elapsed() < m_pdcIntervalMs - 150) {
+  if (m_lastPdcAnswer.isValid() && m_lastPdcAnswer.elapsed() < m_pdcIntervalMs * 3 / 4) {
     return;
   }
-  if (m_pdcUnanswered >= 4 && !pdcRecent) {
+  // Give the module about 3 s to wake up and answer (it took ~1.4 s in the
+  // car), whatever the polling rate.
+  const int giveUpAfter = std::max(4, 3000 / std::max(1, m_pdcIntervalMs));
+  if (m_pdcUnanswered >= giveUpAfter && !pdcRecent) {
     // Reverse without any PDC module answering: car without PDC.
     log(QStringLiteral("Parking sensors: no answer from a PDC module, not asking again until next reverse"));
     m_pdcGaveUp = true;

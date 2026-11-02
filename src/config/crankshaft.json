@@ -142,7 +142,7 @@
       },
       "pdc": {
         "enabled": true,
-        "interval_ms": 750
+        "interval_ms": 250
       },
       "ike": {
         "send_text": true,
