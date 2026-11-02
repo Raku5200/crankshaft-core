@@ -377,15 +377,39 @@ TEST(IbusServiceTest, ClusterTextGoesToIke) {
   bus.run(200);
   EXPECT_TRUE(bus.sent.isEmpty());  // OBC polling is off by default
 
-  service.setClusterText({{"line", "> 300m Galle Rd"}, {"alert", true}});
-  service.setClusterText({{"line", "> 300m Galle Rd"}, {"alert", true}});  // unchanged: once
-  service.setClusterText({{"line", "> 300m Galle Rd"}, {"alert", false}});
+  // The alert goes up once per turn: scroll steps and distance changes for
+  // the same turn neither re-send it nor touch the line under it.
+  const QVariantMap step1{{"line", "> 150m Galle Rd"}, {"alert", true}, {"contentKey", "nav:right:Galle"}};
+  const QVariantMap step2{{"line", "> 140m alle Rd G"}, {"alert", true}, {"contentKey", "nav:right:Galle"}};
+  const QVariantMap away{{"line", "> 300m Galle Rd"}, {"alert", false}, {"contentKey", "nav:right:Galle"}};
+  service.setClusterText(step1);
+  service.setClusterText(step2);
+  service.setClusterText(step2);
   bus.run(600);
+  ASSERT_EQ(bus.sent.size(), 1);
+  EXPECT_EQ(bus.sent[0], ikeCheckControlTextFrame("> 150m Galle Rd"));
 
+  // After alert_display_ms (3 s) it clears and the latest line comes back.
+  bus.run(3000);
   ASSERT_EQ(bus.sent.size(), 3);
-  EXPECT_EQ(bus.sent[0], ikeTelephoneTextFrame("> 300m Galle Rd"));
-  EXPECT_EQ(bus.sent[1], ikeCheckControlTextFrame("> 300m Galle Rd"));
-  EXPECT_EQ(bus.sent[2], ikeCheckControlClearFrame());
+  EXPECT_EQ(bus.sent[1], ikeCheckControlClearFrame());
+  EXPECT_EQ(bus.sent[2], ikeTelephoneTextFrame("> 140m alle Rd G"));
+
+  // Same turn again within alert distance: no second alert, line just scrolls.
+  service.setClusterText(step1);
+  bus.run(300);
+  ASSERT_EQ(bus.sent.size(), 4);
+  EXPECT_EQ(bus.sent[3], ikeTelephoneTextFrame("> 150m Galle Rd"));
+
+  // A new turn alerts again; leaving alert distance clears it straight away.
+  service.setClusterText({{"line", "< 100m Main St"}, {"alert", true}, {"contentKey", "nav:left:Main"}});
+  service.setClusterText({{"line", "< 400m Main St"}, {"alert", false}, {"contentKey", "nav:left:Main"}});
+  bus.run(600);
+  ASSERT_EQ(bus.sent.size(), 7);
+  EXPECT_EQ(bus.sent[4], ikeCheckControlTextFrame("< 100m Main St"));
+  EXPECT_EQ(bus.sent[5], ikeCheckControlClearFrame());
+  EXPECT_EQ(bus.sent[6], ikeTelephoneTextFrame("< 400m Main St"));
+  (void)away;
   ConfigService::instance().set("core.ibus.device", "auto");
 }
 

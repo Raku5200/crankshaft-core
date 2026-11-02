@@ -136,6 +136,10 @@ IbusService::IbusService(QObject* parent) : QObject(parent) {
   m_pollTimer = new QTimer(this);
   connect(m_pollTimer, &QTimer::timeout, this, &IbusService::poll);
 
+  m_alertTimer = new QTimer(this);
+  m_alertTimer->setSingleShot(true);
+  m_alertTimer->setInterval(boundedInt("core.ibus.ike.alert_display_ms", 3000, 500, 30000));
+  connect(m_alertTimer, &QTimer::timeout, this, &IbusService::endAlert);
   m_pdcTimer = new QTimer(this);
   connect(m_pdcTimer, &QTimer::timeout, this, &IbusService::onParkingTick);
 
@@ -537,6 +541,7 @@ void IbusService::pauseClusterText(const QString& why) {
           .arg(why));
   if (m_alertShown) {
     m_alertShown = false;
+    m_alertTimer->stop();
     m_lastAlertLine.clear();
     enqueue(ikeCheckControlClearFrame(), QStringLiteral("IKE alert clear"));
   }
@@ -618,6 +623,7 @@ void IbusService::setSettings(bool pollObc, bool bmbtInput, bool mflInput, bool 
                clusterText ? "on" : "off"));
   if (m_clusterText && !clusterText && m_alertShown) {
     m_alertShown = false;
+    m_alertTimer->stop();
     m_lastAlertLine.clear();
     enqueue(ikeCheckControlClearFrame(), QStringLiteral("IKE alert clear"));
   }
@@ -794,24 +800,47 @@ void IbusService::setClusterText(const QVariantMap& clusterText) {
   }
   const QByteArray line = clusterText.value(QStringLiteral("line")).toString().toLatin1();
   const bool alert = clusterText.value(QStringLiteral("alert")).toBool();
+  m_pendingIkeLine = line;
 
+  // A turn alert is a check-control message, shown once per turn for
+  // alert_display_ms. It is not re-sent on every scroll step or distance
+  // change: each check-control frame blanks the cluster line before it is
+  // drawn, which made scrolling navigation text blink.
+  if (alert && !line.isEmpty() && key != m_alertDoneKey) {
+    m_alertDoneKey = key;
+    m_alertShown = true;
+    m_lastAlertLine = line;
+    enqueue(ikeCheckControlTextFrame(line), QStringLiteral("IKE turn alert"));
+    m_alertTimer->start();
+  } else if (!alert && m_alertShown) {
+    endAlert();
+    return;  // endAlert() sent the current line
+  }
+
+  if (m_alertShown) {
+    return;  // the alert covers the line; the current one goes out when it ends
+  }
   if (line != m_lastIkeLine) {
     m_lastIkeLine = line;
     if (!line.isEmpty()) {
       enqueue(ikeTelephoneTextFrame(line), QStringLiteral("IKE text"));
     }
   }
+}
 
-  if (alert && !line.isEmpty()) {
-    if (!m_alertShown || line != m_lastAlertLine) {
-      m_alertShown = true;
-      m_lastAlertLine = line;
-      enqueue(ikeCheckControlTextFrame(line), QStringLiteral("IKE turn alert"));
-    }
-  } else if (m_alertShown) {
-    m_alertShown = false;
-    m_lastAlertLine.clear();
-    enqueue(ikeCheckControlClearFrame(), QStringLiteral("IKE alert clear"));
+void IbusService::endAlert() {
+  m_alertTimer->stop();
+  if (!m_alertShown) {
+    return;
+  }
+  m_alertShown = false;
+  m_lastAlertLine.clear();
+  enqueue(ikeCheckControlClearFrame(), QStringLiteral("IKE alert clear"));
+  m_lastIkeLine.clear();
+  if (m_sendIkeText && m_clusterText && !m_clusterTextPaused && busAwake() &&
+      m_state.ignition != 0 && !m_pendingIkeLine.isEmpty()) {
+    m_lastIkeLine = m_pendingIkeLine;
+    enqueue(ikeTelephoneTextFrame(m_pendingIkeLine), QStringLiteral("IKE text"));
   }
 }
 

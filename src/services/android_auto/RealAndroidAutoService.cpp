@@ -9089,7 +9089,13 @@ void RealAndroidAutoService::publishClusterText() {
                                                              : 0);
   if (source == QStringLiteral("navigation")) {
     line = navigationLine;
-    alert = m_navigationGuidance.distanceMeters >= 0 &&
+    // No alert for "depart" (0 m while still parked), "continue" or an
+    // unknown maneuver: only for a turn that is actually coming up.
+    using Maneuver = crankshaft::projection::Maneuver;
+    const Maneuver maneuver = m_navigationGuidance.maneuver;
+    const bool turn = maneuver != Maneuver::Unknown && maneuver != Maneuver::Depart &&
+                      maneuver != Maneuver::NameChange && maneuver != Maneuver::Straight;
+    alert = turn && m_navigationGuidance.distanceMeters >= 0 &&
             m_navigationGuidance.distanceMeters <= m_clusterAlertDistanceMeters;
     needsScroll = navigationParts.roadNeedsScroll();
   } else if (source == QStringLiteral("media")) {

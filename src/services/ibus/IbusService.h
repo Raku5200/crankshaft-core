@@ -149,6 +149,7 @@ class IbusService : public QObject {
   QTimer* m_statusTimer = nullptr;
   QTimer* m_staleTimer = nullptr;
   QTimer* m_pdcTimer = nullptr;
+  QTimer* m_alertTimer = nullptr;  // how long a turn alert (check control) stays up
 
   IbusFrameParser m_parser;
   VehicleState m_state;
@@ -164,6 +165,9 @@ class IbusService : public QObject {
   QByteArray m_lastIkeLine;
   QByteArray m_lastAlertLine;
   bool m_alertShown = false;
+  QString m_alertDoneKey;          // turn whose alert was already shown
+  QByteArray m_pendingIkeLine;     // latest line, sent once the alert clears
+  void endAlert();
   // The driver picked OBC values on the cluster (BC button): leave the
   // display alone until the song or the navigation instruction changes.
   bool m_clusterTextPaused = false;
