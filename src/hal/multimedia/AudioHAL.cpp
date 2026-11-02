@@ -30,6 +30,7 @@ class AudioHAL::AudioHALPrivate {
   GstElement* pipeline = nullptr;
   GstElement* source = nullptr;
   GstElement* convert = nullptr;
+  GstElement* resample = nullptr;
   GstElement* volume = nullptr;
   GstElement* sink = nullptr;
   GstBus* bus = nullptr;
@@ -112,19 +113,21 @@ bool AudioHAL::initializePipeline() {
   d->pipeline = gst_pipeline_new("audio-pipeline");
   d->source = gst_element_factory_make("appsrc", "audio-source");
   d->convert = gst_element_factory_make("audioconvert", "converter");
+  d->resample = gst_element_factory_make("audioresample", "resampler");
   d->volume = gst_element_factory_make("volume", "volume-control");
   d->sink = gst_element_factory_make("autoaudiosink", "audio-sink");
 
-  if (!d->pipeline || !d->source || !d->convert || !d->volume || !d->sink) {
+  if (!d->pipeline || !d->source || !d->convert || !d->resample || !d->volume || !d->sink) {
     qCritical() << "Failed to create GStreamer audio elements";
     cleanup();
     return false;
   }
 
   // Build the pipeline
-  gst_bin_add_many(GST_BIN(d->pipeline), d->source, d->convert, d->volume, d->sink, nullptr);
+  gst_bin_add_many(GST_BIN(d->pipeline), d->source, d->convert, d->resample, d->volume, d->sink,
+                   nullptr);
 
-  if (!gst_element_link_many(d->source, d->convert, d->volume, d->sink, nullptr)) {
+  if (!gst_element_link_many(d->source, d->convert, d->resample, d->volume, d->sink, nullptr)) {
     qCritical() << "Failed to link GStreamer audio elements";
     cleanup();
     return false;
@@ -163,6 +166,7 @@ void AudioHAL::cleanup() {
     d->pipeline = nullptr;
     d->source = nullptr;
     d->convert = nullptr;
+    d->resample = nullptr;
     d->volume = nullptr;
     d->sink = nullptr;
   }
@@ -283,8 +287,10 @@ bool AudioHAL::startStream(const QString& streamName, int sampleRate, int channe
 
   // Configure caps for the stream
   GstCaps* caps =
-      gst_caps_new_simple("audio/x-raw", "format", G_TYPE_STRING, "S16LE", "rate", G_TYPE_INT,
-                          sampleRate, "channels", G_TYPE_INT, channels, nullptr);
+      gst_caps_new_simple("audio/x-raw", "format", G_TYPE_STRING, "S16LE", "layout", G_TYPE_STRING,
+                          "interleaved", "rate", G_TYPE_INT, sampleRate, "channels", G_TYPE_INT,
+                          channels, nullptr);
+  // Without "layout" the caps are not fixed and appsrc fails with not-negotiated.
 
   g_object_set(G_OBJECT(d->source), "caps", caps, nullptr);
   gst_caps_unref(caps);

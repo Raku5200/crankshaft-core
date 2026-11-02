@@ -384,6 +384,7 @@ class RealAndroidAutoService : public AndroidAutoService {
   bool m_audioEnabled{true};
   ChannelConfig m_channelConfig;
   // Channel config as configured, before the audio-on-phone override is applied.
+  void applyAudioOnPhone(ChannelConfig& config) const;
   ChannelConfig m_requestedChannelConfig;
   bool m_hasRequestedChannelConfig{false};
   bool m_audioOnPhone{false};

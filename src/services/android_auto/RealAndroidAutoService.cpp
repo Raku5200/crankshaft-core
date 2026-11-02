@@ -5651,18 +5651,25 @@ bool RealAndroidAutoService::setAudioEnabled(bool enabled) {
   return true;
 }
 
+void RealAndroidAutoService::applyAudioOnPhone(ChannelConfig& config) const {
+  if (!m_audioOnPhone) {
+    return;
+  }
+  // Not offering the media and guidance channels makes the phone play music and
+  // navigation prompts itself (its speaker or its Bluetooth device). The system
+  // audio channel must stay: without it the phone never starts projection (seen
+  // on image 12: service discovery answered, then no video channel open).
+  config.mediaAudioEnabled = false;
+  config.speechAudioEnabled = false;
+  config.telephonyAudioEnabled = false;
+}
+
 void RealAndroidAutoService::setChannelConfig(const ChannelConfig& requested) {
   m_requestedChannelConfig = requested;
   m_hasRequestedChannelConfig = true;
 
   ChannelConfig config = requested;
-  if (m_audioOnPhone) {
-    // Not offering audio channels makes the phone keep its own audio output.
-    config.mediaAudioEnabled = false;
-    config.systemAudioEnabled = false;
-    config.speechAudioEnabled = false;
-    config.telephonyAudioEnabled = false;
-  }
+  applyAudioOnPhone(config);
 
   bool needsReconnect =
       isConnected() && (m_channelConfig.videoEnabled != config.videoEnabled ||
@@ -5702,12 +5709,7 @@ void RealAndroidAutoService::setAudioOutputOnPhone(bool onPhone) {
 
   // Apply without the "please reconnect" dialog: the reconnect is done here.
   ChannelConfig config = m_requestedChannelConfig;
-  if (m_audioOnPhone) {
-    config.mediaAudioEnabled = false;
-    config.systemAudioEnabled = false;
-    config.speechAudioEnabled = false;
-    config.telephonyAudioEnabled = false;
-  }
+  applyAudioOnPhone(config);
   m_channelConfig = config;
 
   if (projectionRunning) {
