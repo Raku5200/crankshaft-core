@@ -377,6 +377,48 @@ TEST(IbusServiceTest, ClusterTextGoesToIke) {
   ConfigService::instance().set("core.ibus.device", "auto");
 }
 
+TEST(IbusServiceTest, BcButtonPausesClusterTextUntilIgnitionOff) {
+  ensureApp();
+  FakeBus bus;
+  ASSERT_GE(bus.master, 0);
+  ConfigService::instance().set("core.ibus.device", bus.slavePath);
+  IbusService service;
+  service.start();
+  bus.send(QByteArray::fromHex("8004BF110329"));  // ignition on (KL-15)
+  bus.run(200);
+
+  service.setClusterText({{"line", "Song one"}});
+  bus.run(300);
+  ASSERT_EQ(bus.sent.size(), 1);
+
+  bus.send(QByteArray::fromHex("8004FF57022E"));  // BC button on the stalk
+  bus.run(200);
+  EXPECT_TRUE(service.status().value("clusterTextPaused").toBool());
+  bus.sent.clear();
+  service.setClusterText({{"line", "ong one S"}});  // scrolling
+  service.setClusterText({{"line", "Song two"}});
+  bus.run(300);
+  EXPECT_TRUE(bus.sent.isEmpty());
+
+  bus.send(QByteArray::fromHex("8004BF11002A"));  // ignition off
+  bus.run(100);
+  EXPECT_FALSE(service.status().value("clusterTextPaused").toBool());
+  bus.send(QByteArray::fromHex("8004BF110329"));  // next drive
+  bus.run(100);
+  service.setClusterText({{"line", "Song two"}});
+  bus.run(300);
+  ASSERT_EQ(bus.sent.size(), 1);
+  EXPECT_EQ(bus.sent[0], ikeTelephoneTextFrame("Song two"));
+
+  // Switched off in Settings: nothing is sent at all.
+  service.setSettings(false, true, true, false);
+  bus.sent.clear();
+  service.setClusterText({{"line", "Song three"}});
+  bus.run(300);
+  EXPECT_TRUE(bus.sent.isEmpty());
+  ConfigService::instance().set("core.ibus.device", "auto");
+}
+
 TEST(IbusServiceTest, SettingsTurnOffPollingAndCarControls) {
   ensureApp();
   FakeBus bus;

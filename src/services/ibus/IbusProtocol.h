@@ -47,6 +47,11 @@ constexpr quint8 kAddrMfl = 0x50;
 constexpr quint8 kAddrRadio = 0x68;
 constexpr quint8 kAddrBroadcast = 0xBF;
 
+/// IKE 0x57 "Cluster Buttons" (80 04 FF 57 xx): 0x01/0x41 CHECK press/release,
+/// 0x02 BC button on the stalk (cycles the OBC values on the cluster).
+constexpr quint8 kCmdClusterButtons = 0x57;
+constexpr quint8 kClusterButtonBc = 0x02;
+
 /// Shortest and longest LEN byte accepted. LEN counts DST + data + checksum.
 constexpr int kMinLength = 3;
 constexpr int kMaxLength = 0x40;

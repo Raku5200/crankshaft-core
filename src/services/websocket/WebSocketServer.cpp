@@ -533,7 +533,10 @@ void WebSocketServer::handlePublish(const QString& topic, const QVariantMap& pay
     } else if (topic == QStringLiteral("ibus/settings")) {
       m_ibusService->setSettings(payload.value(QStringLiteral("pollObc")).toBool(),
                                  payload.value(QStringLiteral("bmbtInput"), true).toBool(),
-                                 payload.value(QStringLiteral("mflInput"), true).toBool());
+                                 payload.value(QStringLiteral("mflInput"), true).toBool(),
+                                 payload.value(QStringLiteral("clusterText"), true).toBool());
+    } else if (topic == QStringLiteral("ibus/cluster-text-resume")) {
+      m_ibusService->resumeClusterText();
     } else if (topic == QStringLiteral("ibus/input-target")) {
       m_ibusService->setInputTarget(payload.value(QStringLiteral("target")).toString());
     }

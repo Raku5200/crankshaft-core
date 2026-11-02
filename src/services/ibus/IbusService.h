@@ -24,6 +24,7 @@
 #include <QHash>
 #include <QObject>
 #include <QQueue>
+#include <QSet>
 #include <QString>
 #include <QVariantMap>
 
@@ -75,7 +76,10 @@ class IbusService : public QObject {
   void setInputTarget(const QString& target);
   /// UI settings: poll the cluster for OBC values (off = only listen, e.g. when
   /// the factory nav/monitor already asks), and which car controls to use.
-  void setSettings(bool pollObc, bool bmbtInput, bool mflInput);
+  /// clusterText: show the Android Auto line (song / turn) on the cluster.
+  void setSettings(bool pollObc, bool bmbtInput, bool mflInput, bool clusterText = true);
+  /// Show the Android Auto line again after the BC button paused it.
+  void resumeClusterText();
 
  signals:
   void statusChanged(const QVariantMap& status);
@@ -106,6 +110,8 @@ class IbusService : public QObject {
   void onEchoTimeout();
   void poll();
   void publishStatus();
+  void pauseClusterText(const QString& why);
+  void logUnknownFrame(const IbusFrame& frame);
 
   // config
   bool m_enabled = true;
@@ -115,6 +121,7 @@ class IbusService : public QObject {
   bool m_pollObc = false;
   bool m_bmbtInput = true;
   bool m_mflInput = true;
+  bool m_clusterText = true;
   int m_idleGapMs = 10;
   int m_maxRetries = 3;
   int m_busAwakeWindowMs = 30000;
@@ -146,6 +153,10 @@ class IbusService : public QObject {
   QByteArray m_lastIkeLine;
   QByteArray m_lastAlertLine;
   bool m_alertShown = false;
+  // The driver picked OBC values on the cluster (BC button): leave the
+  // display alone until the next ignition cycle.
+  bool m_clusterTextPaused = false;
+  QSet<quint32> m_loggedFrameKinds;
 
   quint64 m_framesRx = 0;
   quint64 m_framesTx = 0;

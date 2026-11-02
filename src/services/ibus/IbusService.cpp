@@ -198,6 +198,8 @@ auto IbusService::status() const -> QVariantMap {
   map[QStringLiteral("pollObc")] = m_pollObc;
   map[QStringLiteral("bmbtInput")] = m_bmbtInput;
   map[QStringLiteral("mflInput")] = m_mflInput;
+  map[QStringLiteral("clusterText")] = m_clusterText;
+  map[QStringLiteral("clusterTextPaused")] = m_clusterTextPaused;
   map[QStringLiteral("error")] = m_lastError;
   return map;
 }
@@ -374,12 +376,78 @@ void IbusService::handleFrame(const IbusFrame& frame) {
     return;
   }
 
+  const int ignitionBefore = m_state.ignition;
   if (applyClusterFrame(frame, m_state)) {
     emit vehicleStateChanged(m_state.toVariantMap());
+    if (ignitionBefore > 0 && m_state.ignition == 0 && m_clusterTextPaused) {
+      m_clusterTextPaused = false;
+      log(QStringLiteral("Ignition off: cluster text resumes next drive"));
+      publishStatus();
+    }
+    return;
+  }
+  if (frame.source == kAddrIke && frame.command() == kCmdClusterButtons && frame.data.size() >= 2) {
+    const quint8 event = static_cast<quint8>(frame.data.at(1));
+    log(QStringLiteral("Cluster button 0x%1").arg(event, 2, 16, QLatin1Char('0')));
+    if (event == kClusterButtonBc) {
+      pauseClusterText(QStringLiteral("BC button"));
+    }
+    return;
   }
   if (const auto input = decodeInput(frame)) {
     handleInput(*input);
+    return;
   }
+  logUnknownFrame(frame);
+}
+
+void IbusService::logUnknownFrame(const IbusFrame& frame) {
+  // Once per source/destination/command, so the log shows what else the car
+  // sends without flooding it.
+  const quint32 kind = (quint32(frame.source) << 16) | (quint32(frame.destination) << 8) |
+                       quint32(frame.command() & 0xFF);
+  if (m_loggedFrameKinds.size() >= 128 || m_loggedFrameKinds.contains(kind)) {
+    return;
+  }
+  m_loggedFrameKinds.insert(kind);
+  log(QStringLiteral("Seen %1").arg(QString::fromLatin1(frame.raw.toHex(' ').toUpper())));
+}
+
+void IbusService::pauseClusterText(const QString& why) {
+  if (m_clusterTextPaused) {
+    return;
+  }
+  m_clusterTextPaused = true;
+  m_lastIkeLine.clear();
+  log(QStringLiteral("%1: cluster shows OBC values, Android Auto text paused until ignition off")
+          .arg(why));
+  if (m_alertShown) {
+    m_alertShown = false;
+    m_lastAlertLine.clear();
+    enqueue(ikeCheckControlClearFrame(), QStringLiteral("IKE alert clear"));
+  }
+  // Drop text frames not sent yet.
+  QQueue<Outgoing> kept;
+  for (int i = 0; i < m_txQueue.size(); ++i) {
+    const Outgoing& out = m_txQueue.at(i);
+    const bool text = out.reason == QStringLiteral("IKE text") ||
+                      out.reason == QStringLiteral("IKE turn alert");
+    if (!text || (i == 0 && m_awaitingEcho)) {
+      kept.enqueue(out);
+    }
+  }
+  m_txQueue = kept;
+  publishStatus();
+}
+
+void IbusService::resumeClusterText() {
+  if (!m_clusterTextPaused) {
+    return;
+  }
+  m_clusterTextPaused = false;
+  m_lastIkeLine.clear();
+  log(QStringLiteral("Android Auto text on the cluster resumed"));
+  publishStatus();
 }
 
 auto IbusService::keyCodeFor(const InputEvent& event) const -> int {
@@ -415,12 +483,23 @@ void IbusService::handleInput(const InputEvent& event) {
   }
 }
 
-void IbusService::setSettings(bool pollObc, bool bmbtInput, bool mflInput) {
-  if (pollObc == m_pollObc && bmbtInput == m_bmbtInput && mflInput == m_mflInput) {
+void IbusService::setSettings(bool pollObc, bool bmbtInput, bool mflInput, bool clusterText) {
+  if (pollObc == m_pollObc && bmbtInput == m_bmbtInput && mflInput == m_mflInput &&
+      clusterText == m_clusterText) {
     return;
   }
-  log(QStringLiteral("Settings: OBC polling %1, BMBT input %2, MFL input %3")
-          .arg(pollObc ? "on" : "off", bmbtInput ? "on" : "off", mflInput ? "on" : "off"));
+  log(QStringLiteral("Settings: OBC polling %1, BMBT input %2, MFL input %3, cluster text %4")
+          .arg(pollObc ? "on" : "off", bmbtInput ? "on" : "off", mflInput ? "on" : "off",
+               clusterText ? "on" : "off"));
+  if (m_clusterText && !clusterText && m_alertShown) {
+    m_alertShown = false;
+    m_lastAlertLine.clear();
+    enqueue(ikeCheckControlClearFrame(), QStringLiteral("IKE alert clear"));
+  }
+  if (clusterText && !m_clusterText) {
+    m_lastIkeLine.clear();
+  }
+  m_clusterText = clusterText;
   const bool startPolling = pollObc && !m_pollObc;
   m_pollObc = pollObc;
   m_bmbtInput = bmbtInput;
@@ -569,7 +648,8 @@ void IbusService::sendObcControl(int property, int control) {
 }
 
 void IbusService::setClusterText(const QVariantMap& clusterText) {
-  if (!m_sendIkeText || !busAwake() || m_state.ignition == 0) {
+  if (!m_sendIkeText || !m_clusterText || m_clusterTextPaused || !busAwake() ||
+      m_state.ignition == 0) {
     return;
   }
   const QByteArray line = clusterText.value(QStringLiteral("line")).toString().toLatin1();
