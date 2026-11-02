@@ -4293,8 +4293,12 @@ void RealAndroidAutoService::setupChannels() {
         }
 
         // Connect mixed audio output
+        // The mixer output (48 kHz stereo, all AA streams) is what goes to the speakers.
         connect(m_audioMixer.get(), &IAudioMixer::audioMixed, this,
-                [this](const QByteArray& mixedData) { emit audioDataReady(mixedData); });
+                [this](const QByteArray& mixedData) {
+                  routeMediaAudioToVehicle(mixedData);
+                  emit audioDataReady(mixedData);
+                });
 
         connect(m_audioMixer.get(), &IAudioMixer::errorOccurred, this, [](const QString& error) {
           Logger::instance().error("Audio mixer error: " + error);
@@ -4553,8 +4557,12 @@ void RealAndroidAutoService::setupChannelsWithTransport() {
         }
 
         // Connect mixed audio output
+        // The mixer output (48 kHz stereo, all AA streams) is what goes to the speakers.
         connect(m_audioMixer.get(), &IAudioMixer::audioMixed, this,
-                [this](const QByteArray& mixedData) { emit audioDataReady(mixedData); });
+                [this](const QByteArray& mixedData) {
+                  routeMediaAudioToVehicle(mixedData);
+                  emit audioDataReady(mixedData);
+                });
 
         connect(m_audioMixer.get(), &IAudioMixer::errorOccurred, this, [](const QString& error) {
           Logger::instance().error("Audio mixer error: " + error);
@@ -8252,7 +8260,9 @@ void RealAndroidAutoService::onMediaAudioChannelUpdate(const QByteArray& data) {
 
   // PCM audio data from Android device (music playback)
   // Route to vehicle audio system via AudioRouter
-  routeMediaAudioToVehicle(data);
+  if (!m_audioMixer) {
+    routeMediaAudioToVehicle(data);
+  }
 
   if (!m_mediaAudioFrameReceived) {
     m_mediaAudioFrameReceived = true;
@@ -8295,9 +8305,9 @@ void RealAndroidAutoService::onSystemAudioChannelUpdate(const QByteArray& data) 
                    .arg(m_audioEnabled ? QStringLiteral("yes") : QStringLiteral("no")));
   }
 
-  // PCM audio data from Android device (system sounds, notifications)
-  // Route to vehicle audio system via AudioRouter
-  routeSystemAudioToVehicle(data);
+  // PCM audio data from Android device (system sounds, notifications), 16 kHz mono.
+  // It reaches the speakers through the mixer, which converts it to 48 kHz stereo;
+  // pushing it straight into the 48 kHz stereo output would play it garbled.
 
   if (m_audioMixer) {
     m_audioMixer->mixAudioData(IAudioMixer::ChannelId::SYSTEM, data);
@@ -8323,9 +8333,8 @@ void RealAndroidAutoService::onSpeechAudioChannelUpdate(const QByteArray& data) 
                    .arg(m_audioEnabled ? QStringLiteral("yes") : QStringLiteral("no")));
   }
 
-  // PCM audio data from Android device (navigation guidance, voice assistant)
-  // Route to vehicle audio system via AudioRouter with ducking support
-  routeGuidanceAudioToVehicle(data);
+  // PCM audio data from Android device (navigation guidance, voice assistant), 16 kHz
+  // mono. Reaches the speakers through the mixer (see onSystemAudioChannelUpdate).
 
   if (m_audioMixer) {
     m_audioMixer->mixAudioData(IAudioMixer::ChannelId::SPEECH, data);
@@ -8777,7 +8786,12 @@ void RealAndroidAutoService::routeMediaAudioToVehicle(const QByteArray& audioDat
   }
 
   if (!m_audioRouter->routeAudioFrame(AAudioStreamRole::MEDIA, audioData)) {
-    Logger::instance().warning("[RealAndroidAutoService] Failed to route media audio");
+    // One line per ~500 failures; this runs for every audio buffer.
+    if (m_mediaAudioRouteFailures++ % 500 == 0) {
+      Logger::instance().warning(QString("[RealAndroidAutoService] Failed to route media audio "
+                                         "(failures: %1)")
+                                     .arg(m_mediaAudioRouteFailures));
+    }
   }
 }
 

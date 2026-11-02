@@ -269,7 +269,13 @@ bool AudioRouter::routeAudioFrame(AAudioStreamRole role, const QByteArray& audio
 
   // Route through MediaPipeline audio HAL
   if (!m_mediaPipeline->pushAudioData(processedData)) {
-    Logger::instance().error(QStringLiteral("[AudioRouter] Failed to push audio data to pipeline"));
+    // Runs per audio buffer: log the first failure and then every 500th.
+    static quint64 pushFailures = 0;
+    if (pushFailures++ % 500 == 0) {
+      Logger::instance().error(
+          QStringLiteral("[AudioRouter] Failed to push audio data to pipeline (failures: %1)")
+              .arg(pushFailures));
+    }
     return false;
   }
 

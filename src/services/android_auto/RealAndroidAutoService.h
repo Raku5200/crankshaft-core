@@ -426,6 +426,7 @@ class RealAndroidAutoService : public AndroidAutoService {
   quint64 m_mediaAudioUpdateCount{0};
   quint64 m_mediaAudioPayloadCount{0};
   quint64 m_mediaAudioMixCount{0};
+  quint64 m_mediaAudioRouteFailures{0};
   quint64 m_systemAudioUpdateCount{0};
   quint64 m_speechAudioUpdateCount{0};
   quint64 m_sensorRequestCount{0};

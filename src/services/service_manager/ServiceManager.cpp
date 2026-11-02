@@ -324,7 +324,13 @@ bool ServiceManager::startAndroidAutoService(const DeviceConfig& device) {
   if (!device.useMock && !m_mediaPipeline) {
     Logger::instance().info("[ServiceManager]      Creating MediaPipeline for Real AndroidAuto");
     m_mediaPipeline = new MediaPipeline(this);
-    MediaConfig config{};  // Use defaults until profiles provide detailed config
+    // Android Auto media audio is 48 kHz stereo S16LE; the AA service mixes the
+    // 16 kHz system/speech streams up to that format before routing it here.
+    MediaConfig config{};
+    config.streamName = QStringLiteral("android-auto");
+    config.enableAudio = true;
+    config.audioSampleRate = 48000;
+    config.audioChannels = 2;
     if (!m_mediaPipeline->start(config)) {
       Logger::instance().error("[ServiceManager]      Failed to start MediaPipeline");
       delete m_mediaPipeline;

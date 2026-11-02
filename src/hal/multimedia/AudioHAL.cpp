@@ -22,6 +22,7 @@
 #include <gst/app/gstappsrc.h>
 #include <gst/gst.h>
 
+#include <QDateTime>
 #include <QDebug>
 
 class AudioHAL::AudioHALPrivate {
@@ -37,6 +38,15 @@ class AudioHAL::AudioHALPrivate {
   AudioHAL::AudioRoute currentRoute = AudioHAL::AudioRoute::Default;
   int currentVolume = 50;
   bool isMuted = false;
+
+  // Stream state, so a failed or broken stream can be restarted on the next push
+  // (the sound server may come up after core, or restart underneath us).
+  bool streamActive = false;
+  QString streamName;
+  int sampleRate = 48000;
+  int channels = 2;
+  qint64 lastStartAttemptMs = 0;
+  quint64 pushFailures = 0;
 
   static gboolean busCallback(GstBus* bus, GstMessage* message, gpointer userData);
 };
@@ -54,6 +64,12 @@ gboolean AudioHAL::AudioHALPrivate::busCallback(GstBus* bus, GstMessage* message
       qWarning() << "Debug info:" << (debugInfo ? debugInfo : "none");
 
       emit self->errorOccurred(QString("Audio pipeline error: %1").arg(err->message));
+
+      // Drop the stream; the next pushAudioData() restarts it.
+      if (self->d->pipeline) {
+        gst_element_set_state(self->d->pipeline, GST_STATE_NULL);
+      }
+      self->d->streamActive = false;
 
       g_clear_error(&err);
       g_free(debugInfo);
@@ -121,7 +137,12 @@ bool AudioHAL::initializePipeline() {
 
   // Configure appsrc
   g_object_set(G_OBJECT(d->source), "stream-type", 0,  // GST_APP_STREAM_TYPE_STREAM
-               "format", GST_FORMAT_TIME, "is-live", TRUE, nullptr);
+               "format", GST_FORMAT_TIME, "is-live", TRUE, "do-timestamp", TRUE,
+               // ~0.5 s at 48 kHz stereo S16LE: keep latency bounded if the sink stalls.
+               "max-bytes", static_cast<guint64>(96000), nullptr);
+  if (g_object_class_find_property(G_OBJECT_GET_CLASS(d->source), "leaky-type")) {
+    gst_util_set_object_arg(G_OBJECT(d->source), "leaky-type", "downstream");
+  }
 
   // Set initial volume
   setVolume(d->currentVolume);
@@ -255,6 +276,11 @@ bool AudioHAL::startStream(const QString& streamName, int sampleRate, int channe
     return false;
   }
 
+  d->streamName = streamName;
+  d->sampleRate = sampleRate;
+  d->channels = channels;
+  d->lastStartAttemptMs = QDateTime::currentMSecsSinceEpoch();
+
   // Configure caps for the stream
   GstCaps* caps =
       gst_caps_new_simple("audio/x-raw", "format", G_TYPE_STRING, "S16LE", "rate", G_TYPE_INT,
@@ -267,9 +293,12 @@ bool AudioHAL::startStream(const QString& streamName, int sampleRate, int channe
   GstStateChangeReturn ret = gst_element_set_state(d->pipeline, GST_STATE_PLAYING);
   if (ret == GST_STATE_CHANGE_FAILURE) {
     qCritical() << "Failed to start audio stream";
+    gst_element_set_state(d->pipeline, GST_STATE_NULL);
+    d->streamActive = false;
     return false;
   }
 
+  d->streamActive = true;
   qDebug() << "Audio stream started:" << streamName << "(" << sampleRate << "Hz," << channels
            << "channels)";
   emit streamStarted(streamName);
@@ -281,6 +310,7 @@ bool AudioHAL::stopStream(const QString& streamName) {
     return false;
   }
 
+  d->streamActive = false;
   GstStateChangeReturn ret = gst_element_set_state(d->pipeline, GST_STATE_NULL);
   if (ret == GST_STATE_CHANGE_FAILURE) {
     qCritical() << "Failed to stop audio stream";
@@ -297,6 +327,18 @@ bool AudioHAL::pushAudioData(const QByteArray& data) {
     return false;
   }
 
+  if (!d->streamActive) {
+    // Retry at most every 2 s so a missing sound server doesn't stall the caller.
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (now - d->lastStartAttemptMs < 2000) {
+      return false;
+    }
+    qDebug() << "Audio stream not running, restarting it";
+    if (!startStream(d->streamName, d->sampleRate, d->channels)) {
+      return false;
+    }
+  }
+
   // Create GStreamer buffer
   GstBuffer* buffer = gst_buffer_new_allocate(nullptr, data.size(), nullptr);
   GstMapInfo map;
@@ -308,7 +350,13 @@ bool AudioHAL::pushAudioData(const QByteArray& data) {
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(d->source), buffer);
 
   if (ret != GST_FLOW_OK) {
-    qWarning() << "Failed to push audio data, flow return:" << ret;
+    if (d->pushFailures++ % 500 == 0) {
+      qWarning() << "Failed to push audio data, flow return:" << ret
+                 << "failures:" << d->pushFailures;
+    }
+    if (ret == GST_FLOW_FLUSHING || ret == GST_FLOW_ERROR) {
+      d->streamActive = false;
+    }
     return false;
   }
 

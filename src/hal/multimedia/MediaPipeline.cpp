@@ -62,8 +62,9 @@ bool MediaPipeline::start(const MediaConfig& config) {
     m_audioHAL->setRoute(config.audioRoute);
 
     if (!m_audioHAL->startStream(config.streamName, config.audioSampleRate, config.audioChannels)) {
-      qCritical() << "Failed to start audio stream";
-      return false;
+      // Not fatal: the sound server may not be up yet. AudioHAL restarts the
+      // stream on the next pushed buffer, and video must not depend on audio.
+      qWarning() << "Audio stream not started yet; will retry when audio arrives";
     }
   }
 
