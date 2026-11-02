@@ -340,6 +340,10 @@ void AndroidAutoService::setConnectionMode(const QString& mode) {
   Q_UNUSED(mode)
 }
 
+void AndroidAutoService::setAudioOutputOnPhone(bool onPhone) {
+  Q_UNUSED(onPhone)
+}
+
 // Static factory function
 AndroidAutoService* AndroidAutoService::create(MediaPipeline* mediaPipeline,
                                                ProfileManager* profileManager, QObject* parent) {

@@ -510,6 +510,15 @@ void WebSocketServer::handlePublish(const QString& topic, const QVariantMap& pay
         return;
       }
 
+      if (topic == QStringLiteral("android-auto/audio-output")) {
+        // UI audio output preference: {"target": "head_unit" | "phone"}
+        const QString target = payload.value(QStringLiteral("target")).toString().toLower();
+        Logger::instance().info(
+            QString("[WebSocketServer] Audio output requested by UI: %1").arg(target));
+        aaService->setAudioOutputOnPhone(target == QStringLiteral("phone"));
+        return;
+      }
+
       if (topic == QStringLiteral("android-auto/launch")) {
         const QString serialNumber = payload.value(QStringLiteral("serial_number")).toString();
         if (serialNumber.isEmpty()) {

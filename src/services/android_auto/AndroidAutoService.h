@@ -110,6 +110,16 @@ class AndroidAutoService : public QObject {
   virtual void setConnectionMode(const QString& mode);
 
   /**
+   * @brief Choose where the phone plays its audio.
+   *
+   * true: the head unit does not offer audio channels, so the phone keeps its audio
+   * (its own speaker, or a Bluetooth device it is connected to). false: audio is
+   * played by the head unit. Applies by reconnecting a running projection.
+   * Default implementation is a no-op.
+   */
+  virtual void setAudioOutputOnPhone(bool onPhone);
+
+  /**
    * @brief Initialise the Android Auto service
    * @return true if initialisation successful
    */

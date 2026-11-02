@@ -162,6 +162,7 @@ class RealAndroidAutoService : public AndroidAutoService {
   void setWirelessNetworkManager(
       const std::shared_ptr<IWirelessNetworkManager>& manager) override;
   void setConnectionMode(const QString& mode) override;
+  void setAudioOutputOnPhone(bool onPhone) override;
   void setEventBus(EventBus* eventBus) {
     m_eventBus = eventBus;
   }
@@ -382,6 +383,10 @@ class RealAndroidAutoService : public AndroidAutoService {
   int m_videoHeightMargin{0};
   bool m_audioEnabled{true};
   ChannelConfig m_channelConfig;
+  // Channel config as configured, before the audio-on-phone override is applied.
+  ChannelConfig m_requestedChannelConfig;
+  bool m_hasRequestedChannelConfig{false};
+  bool m_audioOnPhone{false};
   DecodeControlConfig m_decodeControlConfig;
   TelemetryConfig m_telemetryConfig;
   ThermalControlConfig m_thermalControlConfig;

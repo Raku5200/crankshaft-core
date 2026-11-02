@@ -5651,7 +5651,19 @@ bool RealAndroidAutoService::setAudioEnabled(bool enabled) {
   return true;
 }
 
-void RealAndroidAutoService::setChannelConfig(const ChannelConfig& config) {
+void RealAndroidAutoService::setChannelConfig(const ChannelConfig& requested) {
+  m_requestedChannelConfig = requested;
+  m_hasRequestedChannelConfig = true;
+
+  ChannelConfig config = requested;
+  if (m_audioOnPhone) {
+    // Not offering audio channels makes the phone keep its own audio output.
+    config.mediaAudioEnabled = false;
+    config.systemAudioEnabled = false;
+    config.speechAudioEnabled = false;
+    config.telephonyAudioEnabled = false;
+  }
+
   bool needsReconnect =
       isConnected() && (m_channelConfig.videoEnabled != config.videoEnabled ||
                         m_channelConfig.mediaAudioEnabled != config.mediaAudioEnabled ||
@@ -5667,6 +5679,40 @@ void RealAndroidAutoService::setChannelConfig(const ChannelConfig& config) {
   if (needsReconnect) {
     Logger::instance().info("Channel config changed while connected - reconnection required");
     emit errorOccurred("Channel configuration changed. Please reconnect.");
+  }
+}
+
+void RealAndroidAutoService::setAudioOutputOnPhone(bool onPhone) {
+  if (onPhone == m_audioOnPhone) {
+    return;
+  }
+
+  if (!m_hasRequestedChannelConfig) {
+    m_requestedChannelConfig = m_channelConfig;
+    m_hasRequestedChannelConfig = true;
+  }
+
+  Logger::instance().info(QString("[RealAndroidAutoService] Audio output -> %1 (state %2)")
+                              .arg(onPhone ? QStringLiteral("phone") : QStringLiteral("head unit"),
+                                   connectionStateToString(m_state)));
+  m_audioOnPhone = onPhone;
+
+  const bool projectionRunning =
+      m_state == ConnectionState::CONNECTED || m_state == ConnectionState::CONNECTING;
+
+  // Apply without the "please reconnect" dialog: the reconnect is done here.
+  ChannelConfig config = m_requestedChannelConfig;
+  if (m_audioOnPhone) {
+    config.mediaAudioEnabled = false;
+    config.systemAudioEnabled = false;
+    config.speechAudioEnabled = false;
+    config.telephonyAudioEnabled = false;
+  }
+  m_channelConfig = config;
+
+  if (projectionRunning) {
+    // The audio channels are agreed when the session starts, so restart it.
+    performImmediateTransportRecovery(QStringLiteral("audio_output_changed"));
   }
 }
 
