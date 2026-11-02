@@ -162,6 +162,7 @@ class RealAndroidAutoService : public AndroidAutoService {
   void setWirelessNetworkManager(
       const std::shared_ptr<IWirelessNetworkManager>& manager) override;
   void setConnectionMode(const QString& mode) override;
+  void requestVideoKeyframe(const QString& reason) override;
   void setAudioOutputOnPhone(bool onPhone) override;
   bool sendRotaryInput(int steps) override;
   void setEventBus(EventBus* eventBus) {
@@ -453,6 +454,7 @@ class RealAndroidAutoService : public AndroidAutoService {
   bool m_videoChannelOpened{false};
   bool m_videoConfigured{false};
   bool m_videoStarted{false};
+  qint64 m_lastKeyframeRequestMs{0};
   bool m_videoFrameReceived{false};
   bool m_mediaAudioConfigured{false};
   bool m_mediaAudioStarted{false};

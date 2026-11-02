@@ -340,6 +340,10 @@ void AndroidAutoService::setConnectionMode(const QString& mode) {
   Q_UNUSED(mode)
 }
 
+void AndroidAutoService::requestVideoKeyframe(const QString& reason) {
+  Q_UNUSED(reason)
+}
+
 bool AndroidAutoService::sendRotaryInput(int steps) {
   Q_UNUSED(steps);
   return false;

@@ -40,6 +40,13 @@ LINES=60000
 journalctl -b -u crankshaft-core --no-pager -o short-precise -n "$LINES" > "$DIR/core.txt" 2>&1
 journalctl -b -u 'crankshaft-ui*' --no-pager -o short-precise -n "$LINES" > "$DIR/ui.txt" 2>&1
 journalctl -b -p warning --no-pager -o short-precise -n 5000 > "$DIR/system-warnings.txt" 2>&1
+# The boot before this one too: after a hang the only way out is a restart,
+# and then that boot is the interesting one.
+if journalctl -b -1 -n 1 --no-pager >/dev/null 2>&1; then
+    journalctl -b -1 -u crankshaft-core --no-pager -o short-precise -n "$LINES" > "$DIR/previous-boot-core.txt" 2>&1
+    journalctl -b -1 -u 'crankshaft-ui*' --no-pager -o short-precise -n "$LINES" > "$DIR/previous-boot-ui.txt" 2>&1
+    journalctl -b -1 -p warning --no-pager -o short-precise -n 5000 > "$DIR/previous-boot-warnings.txt" 2>&1
+fi
 {
     date; uptime; echo
     vcgencmd get_throttled 2>&1; vcgencmd measure_temp 2>&1; echo

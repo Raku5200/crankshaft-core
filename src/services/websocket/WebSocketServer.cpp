@@ -515,6 +515,13 @@ void WebSocketServer::handleSubscribe(QWebSocket* client, const QString& topic) 
           onAndroidAutoConnected(deviceMap);
         }
 
+        // A video subscriber that joins a running session (UI started after
+        // the phone connected) needs a keyframe to start decoding.
+        if (topic.startsWith(QStringLiteral("android-auto/media")) ||
+            topic == QStringLiteral("android-auto/#")) {
+          aaService->requestVideoKeyframe(QStringLiteral("video client subscribed"));
+        }
+
         if (m_hasProjectionStatus) {
           onAndroidAutoProjectionStatus(m_lastProjectionStatus);
         }
@@ -626,6 +633,12 @@ void WebSocketServer::handlePublish(const QString& topic, const QVariantMap& pay
         Logger::instance().info(
             QString("[WebSocketServer] Connection mode requested by UI: %1").arg(mode));
         aaService->setConnectionMode(mode);
+        return;
+      }
+
+      if (topic == QStringLiteral("android-auto/video/keyframe-request")) {
+        aaService->requestVideoKeyframe(
+            payload.value(QStringLiteral("reason"), QStringLiteral("UI request")).toString());
         return;
       }
 

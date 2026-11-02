@@ -110,6 +110,13 @@ class AndroidAutoService : public QObject {
   virtual void setConnectionMode(const QString& mode);
 
   /**
+   * @brief Ask the phone for a fresh keyframe (H.264 IDR) so a video client
+   * that joined mid-session (UI started after the phone connected) can
+   * start decoding. No-op unless video is running.
+   */
+  virtual void requestVideoKeyframe(const QString& reason);
+
+  /**
    * @brief Choose where the phone plays its audio.
    *
    * true: the head unit does not offer audio channels, so the phone keeps its audio

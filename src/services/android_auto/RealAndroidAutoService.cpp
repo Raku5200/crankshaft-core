@@ -3569,6 +3569,25 @@ void RealAndroidAutoService::stopWirelessTransport() {
   m_wirelessHotspotIp.clear();
 }
 
+void RealAndroidAutoService::requestVideoKeyframe(const QString& reason) {
+  // The phone sends SPS/PPS + IDR only when the video starts or regains
+  // focus. A decoder that joins later (the UI connected after a phone that
+  // was already paired reconnected during boot) has nothing to start from
+  // and the screen stays on the boot/waiting view. Re-sending the
+  // "projected" focus makes the phone restart the stream with a keyframe.
+  if (m_state != ConnectionState::CONNECTED || !m_videoStarted || !m_videoEventHandler) {
+    return;
+  }
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  if (m_lastKeyframeRequestMs != 0 && now - m_lastKeyframeRequestMs < 2000) {
+    return;
+  }
+  m_lastKeyframeRequestMs = now;
+  Logger::instance().info(
+      QString("[RealAndroidAutoService] Asking the phone for a keyframe (%1)").arg(reason));
+  m_videoEventHandler->sendProjectedFocusKick();
+}
+
 void RealAndroidAutoService::setConnectionMode(const QString& mode) {
   const QString normalised = mode.trimmed().toLower();
   TransportMode newMode;
