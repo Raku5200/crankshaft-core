@@ -45,6 +45,8 @@
 #include <QRandomGenerator>
 #include <QStringList>
 #include <QSet>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QUuid>
 #include <algorithm>
@@ -3639,8 +3641,23 @@ void RealAndroidAutoService::setConnectionMode(const QString& mode) {
   }
 }
 
+// The UI's audio output choice is kept here as well, so the first session
+// after boot already uses it. Otherwise the UI's hello arrives after the phone
+// has connected and the session has to be restarted (~15 s on image 21).
+static auto audioOutputStateFile() -> QString {
+  return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+         QStringLiteral("/audio-output.ini");
+}
+
 void RealAndroidAutoService::configureTransport(const QMap<QString, QVariant>& settings) {
   applyAndroidAutoLoggingConfig(settings);
+  {
+    QSettings state(audioOutputStateFile(), QSettings::IniFormat);
+    m_audioOnPhone = state.value(QStringLiteral("on_phone"), m_audioOnPhone).toBool();
+    Logger::instance().info(QString("[RealAndroidAutoService] Audio output at start: %1")
+                                .arg(m_audioOnPhone ? QStringLiteral("phone")
+                                                    : QStringLiteral("head unit")));
+  }
   setChannelConfig(resolveAndroidAutoChannelConfig(settings, m_channelConfig));
   m_decodeControlConfig = resolveDecodeControlConfig(settings);
   m_telemetryConfig = resolveTelemetryConfig(settings);
@@ -5753,6 +5770,11 @@ void RealAndroidAutoService::setAudioOutputOnPhone(bool onPhone) {
                               .arg(onPhone ? QStringLiteral("phone") : QStringLiteral("head unit"),
                                    connectionStateToString(m_state)));
   m_audioOnPhone = onPhone;
+  {
+    QSettings state(audioOutputStateFile(), QSettings::IniFormat);
+    state.setValue(QStringLiteral("on_phone"), onPhone);
+    state.sync();
+  }
 
   const bool projectionRunning =
       m_state == ConnectionState::CONNECTED || m_state == ConnectionState::CONNECTING;
