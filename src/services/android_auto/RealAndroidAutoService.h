@@ -455,6 +455,9 @@ class RealAndroidAutoService : public AndroidAutoService {
   bool m_videoConfigured{false};
   bool m_videoStarted{false};
   qint64 m_lastKeyframeRequestMs{0};
+  // Keyframe requests in a row while the UI decoder stays stalled; used to
+  // escalate from a focus kick to a focus toggle to a session reconnect.
+  int m_keyframeRequestStreak{0};
   bool m_videoFrameReceived{false};
   bool m_mediaAudioConfigured{false};
   bool m_mediaAudioStarted{false};

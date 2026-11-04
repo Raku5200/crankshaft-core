@@ -62,6 +62,15 @@ fi
     systemd-analyze critical-chain crankshaft-ui-slim.service 2>&1; echo
     systemd-analyze blame 2>&1 | head -40
 } > "$DIR/boot-time.txt" 2>&1
+# Crash backtraces (systemd-coredump). Only written when something crashed.
+if command -v coredumpctl >/dev/null 2>&1 && coredumpctl list --no-pager >/dev/null 2>&1; then
+    {
+        coredumpctl list --no-pager 2>&1; echo
+        for exe in /usr/bin/crankshaft-ui-slim /usr/bin/crankshaft-core; do
+            coredumpctl info --no-pager "$exe" 2>&1 | head -400; echo
+        done
+    } > "$DIR/crashes.txt" 2>&1
+fi
 for f in /var/log/crankshaft/*.log; do
     [ -f "$f" ] && tail -c 4000000 "$f" > "$DIR/$(basename "$f")"
 done

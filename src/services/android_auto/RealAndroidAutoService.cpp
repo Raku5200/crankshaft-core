@@ -2062,6 +2062,14 @@ class AAVideoEventHandler final
     sendProjectedVideoFocusIndication(true);
   }
 
+  // Tell the phone the head unit took the screen back, so it stops the
+  // projected stream. Sending "projected" again afterwards makes the phone
+  // start a new stream, which begins with SPS/PPS and a keyframe.
+  void sendNativeFocus() {
+    sendProjectedVideoFocusIndication(
+        true, aap_protobuf::service::media::video::message::VIDEO_FOCUS_NATIVE);
+  }
+
   void onChannelOpenRequest(
       const aap_protobuf::service::control::message::ChannelOpenRequest& request) override {
     Q_UNUSED(request)
@@ -2238,14 +2246,17 @@ class AAVideoEventHandler final
   }
 
  private:
-  void sendProjectedVideoFocusIndication(bool unsolicited) {
+  void sendProjectedVideoFocusIndication(
+      bool unsolicited,
+      aap_protobuf::service::media::video::message::VideoFocusMode focus =
+          aap_protobuf::service::media::video::message::VIDEO_FOCUS_PROJECTED) {
     auto channel = m_channel.lock();
     if (!channel || !m_service || !m_service->m_strand) {
       return;
     }
 
     aap_protobuf::service::media::video::message::VideoFocusNotification indication;
-    indication.set_focus(aap_protobuf::service::media::video::message::VIDEO_FOCUS_PROJECTED);
+    indication.set_focus(focus);
     indication.set_unsolicited(unsolicited);
 
     // Mark a new logical stream-nudge attempt (epoch) so we can count at most
@@ -3580,11 +3591,50 @@ void RealAndroidAutoService::requestVideoKeyframe(const QString& reason) {
   if (m_state != ConnectionState::CONNECTED || !m_videoStarted || !m_videoEventHandler) {
     return;
   }
+  if (m_deviceGoneRecoveryScheduled) {
+    return;
+  }
   const qint64 now = QDateTime::currentMSecsSinceEpoch();
   if (m_lastKeyframeRequestMs != 0 && now - m_lastKeyframeRequestMs < 2000) {
     return;
   }
+  // The UI asks every ~3 s while its decoder is stalled. A gap longer than
+  // that means the last stall ended, so start counting again.
+  if (m_lastKeyframeRequestMs == 0 || now - m_lastKeyframeRequestMs > 6000) {
+    m_keyframeRequestStreak = 0;
+  }
   m_lastKeyframeRequestMs = now;
+  ++m_keyframeRequestStreak;
+
+  // Some phones ignore a repeated "projected" focus while they are already
+  // projecting (seen after the UI restarted mid-session: P-frames only for
+  // over a minute). Escalate: kick twice, then toggle focus native ->
+  // projected twice, then reconnect the session, which always starts the
+  // stream from a keyframe.
+  if (m_keyframeRequestStreak >= 5) {
+    Logger::instance().warning(
+        QString("[RealAndroidAutoService] Still no keyframe after %1 requests (%2); "
+                "reconnecting the Android Auto session")
+            .arg(m_keyframeRequestStreak - 1)
+            .arg(reason));
+    m_keyframeRequestStreak = 0;
+    performImmediateTransportRecovery(QStringLiteral("video_keyframe_not_received"));
+    return;
+  }
+  if (m_keyframeRequestStreak >= 3) {
+    Logger::instance().info(
+        QString("[RealAndroidAutoService] Asking the phone for a keyframe (%1), "
+                "toggling video focus (attempt %2)")
+            .arg(reason)
+            .arg(m_keyframeRequestStreak));
+    m_videoEventHandler->sendNativeFocus();
+    QTimer::singleShot(400, this, [this]() {
+      if (m_state == ConnectionState::CONNECTED && m_videoEventHandler) {
+        m_videoEventHandler->sendProjectedFocusKick();
+      }
+    });
+    return;
+  }
   Logger::instance().info(
       QString("[RealAndroidAutoService] Asking the phone for a keyframe (%1)").arg(reason));
   m_videoEventHandler->sendProjectedFocusKick();
