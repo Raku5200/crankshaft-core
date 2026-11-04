@@ -18,6 +18,32 @@ value() {
     sed -n "s/^$1=//p" "$ENV_FILE" | head -n1
 }
 
+wait_iface() {
+    i=0
+    while [ ! -e "/sys/class/net/$IFACE" ] && [ "$i" -lt 60 ]; do
+        sleep 0.25
+        i=$((i + 1))
+    done
+}
+
+# The Pi Zero 2 W's Wi-Fi chip sometimes stops answering (kernel:
+# "brcmf_fw_crashed: Firmware has halted or crashed"). The hotspot is dead
+# after that until the driver is reloaded, so phones can't rejoin.
+fw_crashes() {
+    dmesg 2>/dev/null | grep -c 'brcmf_fw_crashed' || true
+}
+
+reload_wifi() {
+    echo "crankshaft-aa-hotspot: Wi-Fi firmware crashed; reloading the driver" >&2
+    for m in brcmfmac_cyw brcmfmac_wcc brcmfmac_bca; do
+        modprobe -r "$m" 2>/dev/null || true
+    done
+    modprobe -r brcmfmac 2>/dev/null || true
+    sleep 1
+    modprobe brcmfmac || true
+    wait_iface
+}
+
 case "${1:-start}" in
 start)
     if [ ! -r "$ENV_FILE" ]; then
@@ -45,6 +71,7 @@ start)
         nmcli device set "$IFACE" managed no 2>/dev/null || true
     fi
     rfkill unblock wifi 2>/dev/null || true
+    wait_iface
     ip addr flush dev "$IFACE" || true
     ip link set "$IFACE" up
     ip addr add "$ADDR/24" dev "$IFACE"
@@ -79,7 +106,24 @@ start)
         --dhcp-leasefile="$RUN_DIR/dnsmasq.leases" \
         --pid-file="$RUN_DIR/dnsmasq.pid"
 
-    exec hostapd "$RUN_DIR/hostapd.conf"
+    hostapd "$RUN_DIR/hostapd.conf" &
+    HPID=$!
+    trap 'kill "$HPID" 2>/dev/null || true; wait "$HPID" 2>/dev/null || true; exit 0' TERM INT
+    base=$(fw_crashes)
+    while kill -0 "$HPID" 2>/dev/null; do
+        sleep 2
+        now=$(fw_crashes)
+        if [ "$now" -gt "$base" ]; then
+            kill "$HPID" 2>/dev/null || true
+            wait "$HPID" 2>/dev/null || true
+            reload_wifi
+            # Non-zero so systemd restarts the hotspot (RestartSec=3).
+            exit 1
+        fi
+    done
+    rc=0
+    wait "$HPID" || rc=$?
+    exit "$rc"
     ;;
 stop)
     if [ -f "$RUN_DIR/dnsmasq.pid" ]; then
