@@ -3467,6 +3467,25 @@ auto RealAndroidAutoService::currentWirelessInfo() -> aawireless::WifiInfo {
 void RealAndroidAutoService::startWirelessBootstrap() {
   if (!m_wirelessBootstrap) {
     m_wirelessBootstrap = new WirelessAABootstrap(this);
+    // The phone opens the Bluetooth channel again only after it has given up on
+    // its Android Auto session. If we still think that session is up, its Wi-Fi
+    // link is dead (seen when the Pi's Wi-Fi chip stalls): the old socket
+    // accepts writes but nothing arrives, so the screen stays frozen. Drop it so
+    // the phone's new connection is accepted.
+    connect(m_wirelessBootstrap, &WirelessAABootstrap::handshakeStarted, this,
+            [this](const QString& device) {
+              const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+              if (m_state != ConnectionState::CONNECTED || m_connectedSinceMs == 0 ||
+                  nowMs - m_connectedSinceMs < 10000) {
+                return;
+              }
+              aaLogWarning("wirelessBootstrap",
+                           QString("Phone %1 restarted the wireless handshake while the session "
+                                   "was still up (%2 s); dropping the stale session")
+                               .arg(device)
+                               .arg((nowMs - m_connectedSinceMs) / 1000));
+              performImmediateTransportRecovery(QStringLiteral("phone_restarted_wireless_handshake"));
+            });
     connect(m_wirelessBootstrap, &WirelessAABootstrap::handshakeFailed, this,
             [](const QString& device, const QString& reason) {
               Logger::instance().warning(
@@ -8005,6 +8024,9 @@ void RealAndroidAutoService::transitionToState(ConnectionState newState) {
   emit connectionStateChanged(newState);
   publishProjectionStatus(QStringLiteral("connection_state_changed"));
 
+  if (newState != ConnectionState::CONNECTED) {
+    m_connectedSinceMs = 0;
+  }
   if (newState != ConnectionState::CONNECTED && m_usbPresenceTimer) {
     m_usbPresenceTimer->stop();
   }
@@ -8018,6 +8040,7 @@ void RealAndroidAutoService::transitionToState(ConnectionState newState) {
       break;
     case ConnectionState::CONNECTED:
       transitionToSessionState(SessionState::ACTIVE);
+      m_connectedSinceMs = QDateTime::currentMSecsSinceEpoch();
       if (m_wirelessBootstrap) {
         m_wirelessBootstrap->setProjectionActive(true);
       }

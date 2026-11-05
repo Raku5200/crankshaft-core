@@ -5,6 +5,8 @@
 Description=Crankshaft wireless Android Auto hotspot
 After=NetworkManager.service
 PartOf=crankshaft-core.service
+# Restarts after a Wi-Fi chip reset must never hit the start limit.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

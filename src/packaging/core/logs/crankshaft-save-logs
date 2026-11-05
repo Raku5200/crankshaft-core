@@ -40,6 +40,9 @@ LINES=60000
 journalctl -b -u crankshaft-core --no-pager -o short-precise -n "$LINES" > "$DIR/core.txt" 2>&1
 journalctl -b -u crankshaft-ui-slim -u crankshaft-ui-slim-display-setup --no-pager -o short-precise -n "$LINES" > "$DIR/ui.txt" 2>&1
 journalctl -b -p warning --no-pager -o short-precise -n 5000 > "$DIR/system-warnings.txt" 2>&1
+# Wi-Fi hotspot and the Wi-Fi chip's kernel messages (driver resets show here).
+journalctl -b -u crankshaft-aa-hotspot -u bluetooth --no-pager -o short-precise -n 5000 > "$DIR/wifi-bt.txt" 2>&1
+journalctl -b -k --no-pager -o short-precise 2>/dev/null | grep -E 'brcmf|mmc[0-9]|ieee80211|wlan0' | tail -n 2000 > "$DIR/wifi-kernel.txt"
 # The boot before this one too: after a hang the only way out is a restart,
 # and then that boot is the interesting one.
 if journalctl -b -1 -n 1 --no-pager >/dev/null 2>&1; then

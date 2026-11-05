@@ -458,6 +458,8 @@ class RealAndroidAutoService : public AndroidAutoService {
   // Keyframe requests in a row while the UI decoder stays stalled; used to
   // escalate from a focus kick to a focus toggle to a session reconnect.
   int m_keyframeRequestStreak{0};
+  // When the session last entered CONNECTED (ms since epoch), 0 when not connected.
+  qint64 m_connectedSinceMs{0};
   bool m_videoFrameReceived{false};
   bool m_mediaAudioConfigured{false};
   bool m_mediaAudioStarted{false};

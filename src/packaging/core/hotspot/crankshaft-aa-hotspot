@@ -26,22 +26,49 @@ wait_iface() {
     done
 }
 
-# The Pi Zero 2 W's Wi-Fi chip sometimes stops answering (kernel:
-# "brcmf_fw_crashed: Firmware has halted or crashed"). The hotspot is dead
-# after that until the driver is reloaded, so phones can't rejoin.
-fw_crashes() {
-    dmesg 2>/dev/null | grep -c 'brcmf_fw_crashed' || true
+# The Pi Zero 2 W's Wi-Fi chip sometimes stops answering. Either its firmware
+# crashes (kernel: "brcmf_fw_crashed") or the SDIO bus to it stalls (kernel:
+# "mmc1: Timeout waiting for hardware interrupt", "brcmf_sdio_rxfail: count
+# never zeroed") without a crash message. Both leave the hotspot dead, so
+# phones can't rejoin until the driver is reloaded.
+
+# The SDIO host the Wi-Fi chip hangs off (mmc1 on the Pi Zero 2 W).
+wifi_mmc_host() {
+    readlink -f "/sys/class/net/$IFACE/device" 2>/dev/null |
+        sed -n 's#.*/\(mmc[0-9][0-9]*\):[^/]*$#\1#p'
+}
+
+# A score that only goes up while the chip is failing: a firmware crash or a
+# stuck bus counts 2, a single SDIO timeout 1 (one on its own can recover).
+wifi_fault_score() {
+    log=$(dmesg 2>/dev/null || true)
+    crash=$(printf '%s\n' "$log" | grep -c -e 'brcmf_fw_crashed' -e 'count never zeroed' || true)
+    tmo=0
+    if [ -n "$MMC_HOST" ]; then
+        tmo=$(printf '%s\n' "$log" | grep -c "$MMC_HOST: Timeout waiting for hardware interrupt" || true)
+    fi
+    echo $((crash * 2 + tmo))
 }
 
 reload_wifi() {
-    echo "crankshaft-aa-hotspot: Wi-Fi firmware crashed; reloading the driver" >&2
-    for m in brcmfmac_cyw brcmfmac_wcc brcmfmac_bca; do
-        modprobe -r "$m" 2>/dev/null || true
+    echo "crankshaft-aa-hotspot: Wi-Fi chip stopped answering; reloading the driver" >&2
+    for m in brcmfmac_cyw brcmfmac_wcc brcmfmac_bca brcmfmac; do
+        timeout 15 modprobe -r "$m" 2>/dev/null || true
     done
-    modprobe -r brcmfmac 2>/dev/null || true
+    # Reset the SDIO host too, so a stuck bus starts clean.
+    if [ -n "$HOST_DEV" ] && [ -n "$HOST_DRV" ]; then
+        echo "$HOST_DEV" > "$HOST_DRV/unbind" 2>/dev/null || true
+        sleep 1
+        echo "$HOST_DEV" > "$HOST_DRV/bind" 2>/dev/null || true
+    fi
     sleep 1
-    modprobe brcmfmac || true
+    timeout 20 modprobe brcmfmac || true
     wait_iface
+    if [ -e "/sys/class/net/$IFACE" ]; then
+        echo "crankshaft-aa-hotspot: $IFACE is back" >&2
+    else
+        echo "crankshaft-aa-hotspot: $IFACE did not come back" >&2
+    fi
 }
 
 case "${1:-start}" in
@@ -106,14 +133,22 @@ start)
         --dhcp-leasefile="$RUN_DIR/dnsmasq.leases" \
         --pid-file="$RUN_DIR/dnsmasq.pid"
 
+    MMC_HOST=$(wifi_mmc_host)
+    HOST_DEV=""
+    HOST_DRV=""
+    if [ -n "$MMC_HOST" ] && [ -e "/sys/class/mmc_host/$MMC_HOST/device/driver" ]; then
+        HOST_DEV=$(basename "$(readlink -f "/sys/class/mmc_host/$MMC_HOST/device")")
+        HOST_DRV=$(readlink -f "/sys/class/mmc_host/$MMC_HOST/device/driver")
+    fi
+
     hostapd "$RUN_DIR/hostapd.conf" &
     HPID=$!
     trap 'kill "$HPID" 2>/dev/null || true; wait "$HPID" 2>/dev/null || true; exit 0' TERM INT
-    base=$(fw_crashes)
+    base=$(wifi_fault_score)
     while kill -0 "$HPID" 2>/dev/null; do
         sleep 2
-        now=$(fw_crashes)
-        if [ "$now" -gt "$base" ]; then
+        now=$(wifi_fault_score)
+        if [ "$now" -ge $((base + 2)) ]; then
             kill "$HPID" 2>/dev/null || true
             wait "$HPID" 2>/dev/null || true
             reload_wifi
