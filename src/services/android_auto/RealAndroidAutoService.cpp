@@ -1051,11 +1051,11 @@ static void appendVideoSinkFeature(
   videoConfig->set_density(static_cast<uint32_t>(std::max(80, configuredDensity)));
 
 #if CRANKSHAFT_AA_UI_CONFIG
-  // Strip along the bottom covered by the UI's 56 px info bar. Android Auto
+  // Strip along the bottom covered by the UI's 36 px info bar. Android Auto
   // keeps its own controls (media bar, buttons) out of the inset but still
   // draws the map underneath, so nothing interactive ends up hidden.
   const int insetBottom = getBoundedConfigValue(
-      QStringLiteral("core.android_auto.video.content_inset_bottom"), 56, 0, 400);
+      QStringLiteral("core.android_auto.video.content_inset_bottom"), 36, 0, 400);
   if (insetBottom > 0) {
     auto* uiConfig = videoConfig->mutable_ui_config();
     uiConfig->mutable_content_insets()->set_bottom(static_cast<uint32_t>(insetBottom));
