@@ -7,3 +7,14 @@ polkit.addRule(function(action, subject) {
         return polkit.Result.YES;
     }
 });
+
+// Let crankshaft-core restart the head unit (Settings > Restart). It runs
+// without a login session, so logind would otherwise refuse.
+polkit.addRule(function(action, subject) {
+    if (subject.user === "crankshaft" &&
+        (action.id === "org.freedesktop.login1.reboot" ||
+         action.id === "org.freedesktop.login1.reboot-multiple-sessions" ||
+         action.id === "org.freedesktop.login1.reboot-ignore-inhibit")) {
+        return polkit.Result.YES;
+    }
+});

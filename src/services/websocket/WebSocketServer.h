@@ -339,6 +339,8 @@ class WebSocketServer : public QObject {
   /// Settings > Car > Save logs: copy the logs to the SD card's boot partition
   /// (crankshaft-save-logs.service) and report on system/save-logs-result.
   void saveLogsToSdCard();
+  /// Settings > Restart: reboot the Pi through systemd-logind.
+  void rebootSystem();
   bool m_savingLogs = false;
   /// Handle localhost-only admin API requests from provisioning UI
   void handleAdminApiRequest(QWebSocket* client, const QJsonObject& request);

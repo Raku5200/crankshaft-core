@@ -26,6 +26,7 @@
 #include <QBuffer>
 #include <QDBusConnection>
 #include <QDBusMessage>
+#include <unistd.h>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
 #include <QDateTime>
@@ -594,9 +595,36 @@ void WebSocketServer::saveLogsToSdCard() {
           });
 }
 
+void WebSocketServer::rebootSystem() {
+  // Flush the journal and files first: the head unit is often switched off
+  // right after, and a reboot request can race the ignition.
+  Logger::instance().info(QStringLiteral("[System] Restart requested from the UI"));
+  ::sync();
+  QDBusMessage msg = QDBusMessage::createMethodCall(
+      QStringLiteral("org.freedesktop.login1"), QStringLiteral("/org/freedesktop/login1"),
+      QStringLiteral("org.freedesktop.login1.Manager"), QStringLiteral("Reboot"));
+  msg.setArguments({false});  // not interactive: polkit decides (rule shipped with core)
+  auto* watcher =
+      new QDBusPendingCallWatcher(QDBusConnection::systemBus().asyncCall(msg, 10000), this);
+  connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher* call) {
+    call->deleteLater();
+    if (call->isError()) {
+      Logger::instance().warning(
+          QString("[System] Restart failed: %1").arg(call->error().message()));
+      broadcastEvent(QStringLiteral("system/reboot-result"),
+                     {{QStringLiteral("state"), QStringLiteral("error")},
+                      {QStringLiteral("message"), call->error().message()}});
+    }
+  });
+}
+
 void WebSocketServer::handlePublish(const QString& topic, const QVariantMap& payload) {
   if (topic == QStringLiteral("system/save-logs")) {
     saveLogsToSdCard();
+    return;
+  }
+  if (topic == QStringLiteral("system/reboot")) {
+    rebootSystem();
     return;
   }
   if (topic.startsWith(QStringLiteral("ibus/")) && m_ibusService) {
