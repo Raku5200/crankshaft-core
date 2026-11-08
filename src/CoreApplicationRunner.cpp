@@ -149,10 +149,18 @@ bool initializeLoggerFromConfig() {
     level = Logger::Level::Fatal;
   }
 
+  // The journal already keeps everything (and Save logs reads it). A second
+  // copy in /var/log/crankshaft doubled the SD card writes, so it is only
+  // written when core.logging.to_file is true.
+  if (!ConfigService::instance().get("core.logging.to_file", false).toBool()) {
+    logFilePath.clear();
+  }
+
   Logger::instance().setLevel(level);
   Logger::instance().setLogFile(logFilePath);
   Logger::instance().info(
-      QString("Logging configured: level=%1, file_path=%2").arg(logLevel, logFilePath));
+      QString("Logging configured: level=%1, file_path=%2")
+          .arg(logLevel, logFilePath.isEmpty() ? QStringLiteral("<journal only>") : logFilePath));
 
   return true;
 }

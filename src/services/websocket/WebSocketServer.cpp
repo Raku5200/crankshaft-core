@@ -48,6 +48,10 @@
 #include "../service_manager/ServiceManager.h"
 #include "../../hal/wireless/BluetoothManager.h"
 
+// Per-frame diagnostics: first frame, then about once a minute at 30 fps.
+// More often filled the journal and wore the SD card for no benefit.
+static constexpr int kFrameLogEvery = 1800;
+
 static auto normaliseVendorFilterList(const QVariant& rawValue) -> QStringList {
   QStringList values;
 
@@ -1277,7 +1281,7 @@ void WebSocketServer::broadcastEvent(const QString& topic, const QVariantMap& pa
                                  .arg(topic)
                                  .arg(m_clients.size()));
   } else {
-    Logger::instance().info(
+    Logger::instance().debug(
         QString("[WebSocketServer] broadcastEvent called - Topic: %1").arg(topic));
     Logger::instance().debug(
         QString("[WebSocketServer] Payload keys: %1").arg(payload.keys().join(", ")));
@@ -1322,7 +1326,7 @@ void WebSocketServer::broadcastEvent(const QString& topic, const QVariantMap& pa
 
     if (shouldSend) {
       if (!isMediaTopic) {
-        Logger::instance().info(
+        Logger::instance().debug(
             QString("[WebSocketServer] Sending event to client (matched subscription)"));
       }
       client->sendTextMessage(message);
@@ -1454,7 +1458,7 @@ void WebSocketServer::setupAndroidAutoConnections() {
             // stream (and is asked for 30 fps); never thin it out here.
 
             ++m_h264BroadcastCount;
-            if (m_h264BroadcastCount == 1 || (m_h264BroadcastCount % 30) == 0) {
+            if (m_h264BroadcastCount == 1 || (m_h264BroadcastCount % kFrameLogEvery) == 0) {
               Logger::instance().info(
                   QString("[WebSocketServer] H.264 broadcast: count=%1 sourceBytes=%2")
                       .arg(m_h264BroadcastCount)

@@ -106,6 +106,10 @@
 #include <aasdk/USB/USBWrapper.hpp>
 #include <boost/asio.hpp>
 
+// Per-frame diagnostics: first frame, then about once a minute at 30 fps.
+// More often filled the journal and wore the SD card for no benefit.
+static constexpr int kFrameLogEvery = 1800;
+
 /**
  * @brief Log info message through standard structured logger
  */
@@ -878,6 +882,12 @@ static void applyAndroidAutoLoggingConfig(const QMap<QString, QVariant>& setting
   }
 
   Logger::instance().setLevel(parsedLevel);
+
+  // Journal only unless core.logging.to_file is set (see CoreApplicationRunner).
+  if (!resolveSettingBool(settings, "logging.to_file", "core.services.android_auto.logging.to_file",
+                          "core.logging.to_file", false)) {
+    logFilePath.clear();
+  }
 
   if (!logFilePath.isEmpty()) {
     QFileInfo logFileInfo(logFilePath);
@@ -2171,7 +2181,7 @@ class AAVideoEventHandler final
                        .arg(static_cast<qulonglong>(timestamp)));
     }
     m_payloadCount++;
-    if ((m_payloadCount % 120) == 0) {
+    if ((m_payloadCount % kFrameLogEvery) == 0) {
       aaLogDebug("videoChannel", QString("payload_count=%1 bytes=%2 session_id=%3 timestamp=%4")
                                      .arg(m_payloadCount)
                                      .arg(buffer.size)
@@ -2194,7 +2204,7 @@ class AAVideoEventHandler final
                                const aasdk::error::Error& error) { self->onChannelError(error); });
     channel->sendMediaAckIndication(ack, std::move(promise));
     m_ackCount++;
-    if ((m_ackCount % 120) == 0) {
+    if ((m_ackCount % kFrameLogEvery) == 0) {
       aaLogDebug("videoChannel",
                  QString("ack_count=%1 session_id=%2").arg(m_ackCount).arg(m_sessionId));
     }
@@ -2450,7 +2460,7 @@ class AAAudioEventHandler final
               .arg(static_cast<qulonglong>(timestamp)));
     }
     m_payloadCount++;
-    if ((m_payloadCount % 120) == 0) {
+    if ((m_payloadCount % kFrameLogEvery) == 0) {
       aaLogDebug("audioChannel",
                  QString("channel=%1 payload_count=%2 bytes=%3 session_id=%4 timestamp=%5")
                      .arg(m_channelName)
@@ -2476,7 +2486,7 @@ class AAAudioEventHandler final
                                const aasdk::error::Error& error) { self->onChannelError(error); });
     m_ackFn(ack, std::move(promise));
     m_ackCount++;
-    if ((m_ackCount % 120) == 0) {
+    if ((m_ackCount % kFrameLogEvery) == 0) {
       aaLogDebug("audioChannel", QString("channel=%1 ack_count=%2 session_id=%3")
                                      .arg(m_channelName)
                                      .arg(m_ackCount)
@@ -8316,7 +8326,7 @@ void RealAndroidAutoService::onVideoChannelUpdate(const QByteArray& data, int wi
     m_lastVideoEncodedEmitTimer.restart();
 
     const bool containsVclNal = h264ContainsVclNal(data);
-    if (m_videoEncodedEmitCount == 1 || (m_videoEncodedEmitCount % 30) == 0) {
+    if (m_videoEncodedEmitCount == 1 || (m_videoEncodedEmitCount % kFrameLogEvery) == 0) {
       aaLogInfo(
           "videoChannel",
           QString("H.264 encoded frame cadence: count=%1 intervalMs=%2 bytes=%3 resolution=%4x%5 "

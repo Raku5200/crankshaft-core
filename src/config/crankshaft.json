@@ -123,6 +123,7 @@
     },
     "logging": {
       "level": "info",
+      "to_file": false,
       "file": "/var/log/crankshaft/crankshaft.log"
     },
     "bluetooth": {
