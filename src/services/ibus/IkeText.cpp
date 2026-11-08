@@ -198,12 +198,14 @@ auto formatMediaLine(const projection::NowPlaying& nowPlaying, const IkeGlyphs& 
   }
   QByteArray line = glyphs.music;
   if (!line.isEmpty()) line.append(' ');
+  // Song first: it is what changes, and it is what shows before the cluster
+  // starts scrolling the rest.
   const QByteArray artist = toIkeCharset(nowPlaying.artist);
   const QByteArray song = toIkeCharset(nowPlaying.song);
   if (!artist.isEmpty() && !song.isEmpty()) {
-    line.append(artist + " - " + song);
+    line.append(song + " - " + artist);
   } else {
-    line.append(artist.isEmpty() ? song : artist);
+    line.append(song.isEmpty() ? artist : song);
   }
   return line;
 }

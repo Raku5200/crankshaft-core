@@ -101,7 +101,7 @@ auto formatNavigationParts(const projection::NavigationGuidance& guidance,
 auto formatNavigationLine(const projection::NavigationGuidance& guidance,
                           const IkeGlyphs& glyphs = {}, int scrollStep = 0) -> QByteArray;
 
-/// "Artist - Song" (or whichever part exists). May be longer than 20; use
+/// "Song - Artist" (or whichever part exists). May be longer than 20; use
 /// scrollWindow() to show it. Empty when nothing is playing.
 auto formatMediaLine(const projection::NowPlaying& nowPlaying, const IkeGlyphs& glyphs = {})
     -> QByteArray;

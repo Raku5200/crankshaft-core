@@ -117,9 +117,9 @@ TEST(IkeTextTest, MediaLineFoldsAccentsAndScrolls) {
   np.artist = QStringLiteral("Beyoncé");
   np.song = QStringLiteral("Café “Night” Drive");
   const QByteArray line = formatMediaLine(np);
-  EXPECT_EQ(line, QByteArray("Beyonce - Cafe \"Night\" Drive"));
+  EXPECT_EQ(line, QByteArray("Cafe \"Night\" Drive - Beyonce"));
   EXPECT_EQ(scrollWindow(line, 0), line.left(20));
-  EXPECT_EQ(scrollWindow(line, 10), QByteArray("Cafe \"Night\" Drive  "));
+  EXPECT_EQ(scrollWindow(line, 13), QByteArray("Drive - Beyonce   Ca"));
   EXPECT_EQ(scrollWindow(QByteArray("short"), 7), QByteArray("short"));
 }
 
